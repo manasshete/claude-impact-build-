@@ -11,6 +11,11 @@ It is not a complaint app: complaints still go to BMC's own MyBMC. It adds what 
 
 Team 23 · Claude Impact Lab Mumbai · 21 Nov 2026
 
+## Live
+
+- **Phone app:** <https://manasshete.github.io/claude-impact-build-/app/index.html> (GitHub Pages, from `app/`). Also `AplaBMC.apk` in this repo. Open the link on a phone and "Check the road near me" works over HTTPS.
+- **Board:** deploy free on [Streamlit Community Cloud](https://share.streamlit.io): New app, repository `manasshete/claude-impact-build-`, branch `main`, main file `app.py`. Nothing else to set; `apla_data.json` is already committed.
+
 ## What is in this repo
 
 ```

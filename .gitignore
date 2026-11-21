@@ -5,7 +5,6 @@ claude_text_cache.json
 .hallmark/
 .DS_Store
 node_modules/
-apla-bmc.zip
 android/.gradle/
 android/build/
 android/app/build/

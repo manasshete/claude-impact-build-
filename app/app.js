@@ -6,7 +6,7 @@ const RTI_URL = "https://rtionline.maharashtra.gov.in/";
 const DEPT_URL = "https://mmrda.maharashtra.gov.in/";
 const FAR_KM = 25; // farther than this from every road = not in Mumbai (home "near me" button)
 const PLACE_KM = 3; // a pasted link / address / photo location must fall within this of a road we hold
-const PUBLIC_URL = ""; // e.g. https://<team>.github.io/<repo>/app/index.html — used in WhatsApp links once hosted
+const PUBLIC_URL = "https://manasshete.github.io/claude-impact-build-/app/index.html"; // used in WhatsApp links so a share opens the live app
 const APK_HOST = "appassets.androidplatform.net"; // origin the Android app serves its bundled files from
 const LANGS = ["mr", "hi", "en"];
 const RED_FLAGS = new Set(["built_weak", "billed_twice", "overcharged"]);

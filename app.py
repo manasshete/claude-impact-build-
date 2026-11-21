@@ -2,14 +2,22 @@
 
 Run:  streamlit run app.py
 """
+import datetime as dt
 import html
 import json
+import os
 import re
+import sys
+import urllib.request
 from pathlib import Path
+from urllib.parse import quote
 
 import altair as alt
 import pandas as pd
 import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).parent / "server"))
+from store import Store  # noqa: E402  the shared store the phone app writes to
 
 DATA = Path(__file__).parent / "apla_data.json"
 st.set_page_config(page_title="Apla BMC · Ward Accountability Board", page_icon="🏛️", layout="wide", initial_sidebar_state="collapsed")
@@ -27,7 +35,9 @@ LABELS = {
 RED_TYPES = ["overcharged", "billed_twice", "no_complaint", "guarantee_paid", "built_weak"]
 AMBER_TYPES = ["failed_fix", "repeat_patch", "pump_no_rain", "utility_damage", "closed_by_old_repair"]
 STATUS = {"pending": "Pending", "answered": "Answered", "held": "Payment held",
-          "fixfree": "Contractor to fix free", "recover": "Recover from utility"}
+          "fixfree": "Contractor to fix free", "recover": "Recover from utility", "released": "Hold released"}
+KIND_STATUS = {"answer": "answered", "hold": "held", "fixfree": "fixfree", "recover": "recover", "release": "released"}
+VIA_LABEL = {"exif": "Photo location", "gps": "Phone GPS", "link": "Google Maps link", "address": "Typed address", "road": "Chose the road"}
 
 
 @st.cache_data
@@ -60,6 +70,112 @@ D = load()
 AS_OF = pd.Timestamp(D["as_of"])
 W = {w["code"]: w for w in D["wards"]}
 flags_all = pd.DataFrame(D["flags"])
+flags_all["key"] = flags_all["job_id"].astype(str) + "|" + flags_all["type"] + "|" + flags_all["evidence"].map(lambda e: str(e.get("complaint_id", "")))
+ROADS = {r["road_id"]: r for r in D["roads"]}
+GRADE = {(c["ward"], c["name"]): c["grade"] for c in D["contractors"]}
+FLAGS_BY_ROAD = {rid: g.to_dict("records") for rid, g in flags_all.groupby("road_id") if rid}
+
+# ---- the link to the phone app: the shared store. Local file by default; set APLA_API_URL to read a hosted API instead.
+API_URL = os.environ.get("APLA_API_URL", "").rstrip("/")
+ADMIN_TOKEN = os.environ.get("APLA_ADMIN_TOKEN", "dev-ward-office")
+
+
+@st.cache_resource
+def _store_at(path):
+    return Store(path or None)
+
+
+def _local_store():
+    return _store_at(os.environ.get("APLA_DB", ""))  # keyed on the path, so changing APLA_DB takes effect
+
+
+def _http(path, method="GET", body=None):
+    req = urllib.request.Request(API_URL + path, method=method, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "X-Admin-Token": ADMIN_TOKEN})
+    with urllib.request.urlopen(req, timeout=6) as r:
+        return json.loads(r.read())
+
+
+def get_signals():
+    try:
+        return (_http("/api/signals")["roads"] if API_URL else _local_store().signals()), True
+    except Exception:
+        return {}, False
+
+
+def get_reports(ward=None, days=None, limit=500):
+    try:
+        if API_URL:
+            q = f"?limit={limit}" + (f"&ward={quote(ward, safe='')}" if ward else "") + (f"&days={days}" if days else "")
+            return _http("/api/reports" + q)["reports"], True
+        since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days) if days else None
+        return _local_store().recent_reports(ward, limit, since), True
+    except Exception:
+        return [], False
+
+
+def get_actions():
+    try:
+        return (_http("/api/actions")["actions"] if API_URL else _local_store().latest_actions()), True
+    except Exception:
+        return {}, False
+
+
+def post_action(road_id, kind, text, job_id, flag_key):
+    try:
+        if API_URL:
+            _http("/api/actions", "POST", {"road_id": road_id, "kind": kind, "text": text, "job_id": job_id, "flag_key": flag_key})
+        else:
+            _local_store().add_action(road_id, kind, text, job_id, flag_key)
+        return True
+    except Exception:
+        return False
+
+
+def status_in(actions, key):
+    return KIND_STATUS.get((actions.get(key) or {}).get("kind"), "pending")
+
+
+def voice_by_road(ward, days):
+    """Complaints from the phone app, grouped by road (the board only sees which device, never who)."""
+    reps, ok = get_reports(ward, days)
+    out = {}
+    for r in reps:
+        v = out.setdefault(r["road_id"], {"reports": 0, "devices": set(), "last": r["created_at"], "notes": [], "thumbs": [], "via": {}})
+        v["reports"] += 1
+        v["devices"].add(r["device"])
+        v["last"] = max(v["last"], r["created_at"])
+        v["via"][r["via"]] = v["via"].get(r["via"], 0) + 1
+        if r.get("note"):
+            v["notes"].append((r["created_at"], r["note"]))
+        if r.get("thumb"):
+            v["thumbs"].append(r["thumb"])
+    return out, ok
+
+
+def critical_check(rid, v, min_devices, actions):
+    """Critical voice = independent voices AND proof AND a poor record, all at once. Voice alone never counts."""
+    road, flags = ROADS[rid], FLAGS_BY_ROAD.get(rid, [])
+    unanswered = [f for f in flags if f["severity"] == "red" and status_in(actions, f["key"]) == "pending"]
+    poor = sorted({f["contractor"] for f in unanswered if GRADE.get((road["ward"], f["contractor"]), "A") in "DF"})
+    checks = {
+        f"{len(v['devices'])} independent devices (needs {min_devices})": len(v["devices"]) >= min_devices,
+        "an unanswered red flag on the road": bool(unanswered),
+        "a failed fix on the road": road["broke_again"] > 0 or any(f["type"] == "failed_fix" for f in flags),
+        "a contractor with a poor record (D or worse)": bool(poor),
+    }
+    return {"critical": all(checks.values()), "checks": checks, "contractors": poor}
+
+
+def check_chips(c):
+    return "".join(f'<span class="{"ok" if met else "no"}">{"Met" if met else "Not yet"}: {esc(name)}</span>' for name, met in c["checks"].items())
+
+
+def when(iso):
+    try:
+        return pd.to_datetime(iso).tz_convert("Asia/Kolkata").strftime("%d %b %H:%M")
+    except Exception:
+        return str(iso)
 
 # ---------------------------------------------------------------- style
 st.markdown(H("""<style>
@@ -125,6 +241,12 @@ h1,h2,h3,h4{font-family:'Inter','Noto Sans Devanagari',sans-serif;letter-spacing
 .lb .bar{flex:1;height:10px;background:var(--paper2);border-radius:6px;overflow:hidden;}.lb .bar i{display:block;height:100%;background:var(--tang);border-radius:6px;}.lb .v{width:42px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;}
 .ev .k{color:var(--muted);font-size:.84rem;}.ev .val{font-weight:600;}
 .foot{margin-top:34px;padding-top:14px;border-top:1px solid var(--rule);font-size:.82rem;color:var(--muted);}
+.vrow{background:#fff;border:1px solid var(--rule);border-radius:16px;padding:14px 16px;margin:8px 0;box-shadow:0 1px 0 var(--rule);}
+.vrow .vh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:1.02rem;color:var(--pine-d);}
+.vrow .vm{font-size:.9rem;color:var(--muted);margin:4px 0 6px;}
+.chips span.ok{background:var(--green50);color:var(--green-t);}.chips span.no{background:var(--paper2);color:var(--muted);}
+.livehead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:18px 0 4px;}
+.livehead .sec{margin:0;}.livehead .note{margin:0;}
 /* streamlit widgets */
 [data-testid="stTabs"] [role="tablist"]{gap:6px;border-bottom:1px solid var(--rule);}
 [data-testid="stTabs"] [role="tab"]{padding:12px 20px;border-radius:12px 12px 0 0;color:var(--muted);height:auto;}
@@ -170,12 +292,78 @@ st.caption("Public board. Data: synthetic dataset. No names of people or parties
 
 wf = flags_all[flags_all["ward"] == ward].copy()
 wf["key"] = wf["job_id"].astype(str) + "|" + wf["type"] + "|" + wf["evidence"].map(lambda e: str(e.get("complaint_id", "")))
-if "status" not in st.session_state:
-    st.session_state.status = {}
-    st.session_state.answers = {}
+if "plan" not in st.session_state:
     st.session_state.plan = set()
 days_left = lambda due: (pd.Timestamp(due) - AS_OF).days
-status_of = lambda key: st.session_state.status.get(key, "pending")
+ACTIONS, LINK_OK = get_actions()
+status_of = lambda key: status_in(ACTIONS, key)
+st.caption(("Phone-app link: " + (API_URL or f"shared store on this machine ({Path(_local_store().path).name})") + ". ") if LINK_OK else "Phone-app link is down: complaints and ward-office actions cannot be read or saved right now.")
+
+
+def do_action(row, kind, text):
+    """Save a ward-office decision to the shared store, so the phone app can show it on the road."""
+    if not row["road_id"]:
+        st.warning("This flag has no road linked, so it cannot carry a payment action.")
+        return False
+    ok = post_action(row["road_id"], kind, text, row["job_id"] or None, row["key"])
+    if not ok:
+        st.error("Could not save. The phone-app link is down.")
+    return ok
+
+
+def vmetrics(ward):
+    days, mind = st.session_state.get("cv_days", 7), st.session_state.get("cv_min", 3)
+    voice, _ = voice_by_road(ward, days)
+    actions, _ = get_actions()
+    sig, _ = get_signals()
+    reps24, _ = get_reports(ward, 1)
+    roads_in_ward = [rid for rid, r in ROADS.items() if r["ward"] == ward]
+    crit = {rid: critical_check(rid, v, mind, actions) for rid, v in voice.items()}
+    return dict(days=days, mind=mind, voice=voice, crit=crit, today=len(reps24), window=sum(v["reports"] for v in voice.values()),
+                metoo=sum(sig.get(rid, {}).get("metoo", 0) for rid in roads_in_ward), n_crit=sum(1 for c in crit.values() if c["critical"]))
+
+
+def live_kpis(m):
+    return H('<div class="kpis" style="grid-template-columns:repeat(4,minmax(0,1fr))">' +
+             kpi("Complaints today", str(m["today"]), "from the phone app", TANG) +
+             kpi(f"Complaints, last {m['days']} days", str(m["window"]), "all roads in this ward", PINE) +
+             kpi("“Me too” from the app", str(m["metoo"]), "one per device per road", TEAL2) +
+             kpi("Roads in critical voice", str(m["n_crit"]), "voice, proof and a poor record agree", RED if m["n_crit"] else GREEN) + '</div>')
+
+
+@st.fragment(run_every="5s")
+def live_strip(ward):
+    m = vmetrics(ward)
+    st.markdown('<div class="livehead"><div class="sec">Live from the phone app</div><div class="note">updates every few seconds</div></div>', unsafe_allow_html=True)
+    st.markdown(live_kpis(m), unsafe_allow_html=True)
+
+
+@st.fragment(run_every="5s")
+def live_panel(ward):
+    m = vmetrics(ward)
+    st.markdown('<div class="livehead"><div class="sec">Live from the phone app</div><div class="note">updates every few seconds</div></div>', unsafe_allow_html=True)
+    st.markdown(live_kpis(m), unsafe_allow_html=True)
+    if not m["voice"]:
+        st.markdown('<div class="card"><h3>No complaints yet in this window</h3><div class="note">When someone raises a complaint in the phone app on a road in this ward, it appears here within seconds.</div></div>', unsafe_allow_html=True)
+        return
+    st.markdown('<div class="sec">Roads by live voice</div>', unsafe_allow_html=True)
+    actions, _ = get_actions()
+    sig, _ = get_signals()
+    for rid, v in sorted(m["voice"].items(), key=lambda kv: -len(kv[1]["devices"])):
+        c = m["crit"][rid]
+        label, tone = ("Critical voice", "red") if c["critical"] else ("Building", "ochre")
+        chips = check_chips(c)
+        who = f' · contractor(s) to review: {esc(", ".join(c["contractors"]))}' if c["critical"] and c["contractors"] else ""
+        st.markdown(H(f'<div class="vrow"><div class="vh"><b>{esc(ROADS[rid]["name"])}</b> <span style="color:var(--muted);font-size:.85rem">{esc(rid)}</span><span class="pill {tone}">{label}</span></div>'
+                      f'<div class="vm">{v["reports"]} complaints from {len(v["devices"])} devices · {sig.get(rid, {}).get("metoo", 0)} Me too · last {esc(when(v["last"]))}{who}</div>'
+                      f'<div class="chips">{chips}</div></div>'), unsafe_allow_html=True)
+    st.markdown('<div class="sec">Latest complaints</div>', unsafe_allow_html=True)
+    reps, _ = get_reports(ward, m["days"], 50)
+    rows = pd.DataFrame([{"When": when(r["created_at"]), "Road": ROADS[r["road_id"]]["name"], "Complaint": r["note"] or "(photo or place only)",
+                          "How located": VIA_LABEL.get(r["via"], r["via"]), "Photo": r["thumb"] or None, "Device": r["device"][:6]} for r in reps])
+    st.dataframe(rows, hide_index=True, width="stretch", height=min(420, 44 * (len(rows) + 1)),
+                 column_config={"When": st.column_config.TextColumn(width=110), "Road": st.column_config.TextColumn(width=150), "Complaint": st.column_config.TextColumn(width="large"),
+                                "How located": st.column_config.TextColumn(width=130), "Photo": st.column_config.ImageColumn(width=70), "Device": st.column_config.TextColumn(width=80)})
 
 tabs = st.tabs(["Overview", "Red flags", "Contractors", "Next rupee", "Citizen voice"])
 
@@ -197,6 +385,7 @@ with tabs[0]:
 <div class="chip"><span class="n" style="color:var(--green)">{answered}</span><span class="t">answered by BMC</span></div>
 <div class="chip"><span class="n" style="color:var(--tang-t)">{pend}</span><span class="t">still pending</span></div>
 <div class="chip"><span class="n" style="color:var(--red)">{overdue}</span><span class="t">overdue, past 30 days</span></div></div>"""), unsafe_allow_html=True)
+    live_strip(ward)
 
     left, right = st.columns([2, 3], gap="large")
     with left:
@@ -233,6 +422,7 @@ with tabs[1]:
     count_of = {LABELS[t]: int((wf["type"] == t).sum()) for t in RED_TYPES + AMBER_TYPES}
     pick = st.pills("Filter", opts, default="All", format_func=lambda o: o if o == "All" else f"{o}  {count_of[o]}", label_visibility="collapsed") or "All"
     chosen = [k for k, v in LABELS.items() if v == pick][:1]
+    VM = vmetrics(ward)
 
     def sev_style(row):
         out = [""] * len(row)
@@ -242,6 +432,8 @@ with tabs[1]:
                 out[i] = "color:#8E1414;font-weight:700" if v == "Overdue" else ("color:#7C4A03;font-weight:600" if int(re.sub(r"\D", "", v) or 99) < 10 else "")
             if c == "Status":
                 out[i] = {"Answered": "color:#106030;font-weight:700", "Pending": "color:#A8420A;font-weight:700"}.get(v, "color:#0F4C5C;font-weight:600")
+            if c == "Voice":
+                out[i] = "color:#8E1414;font-weight:700" if v == "Critical" else ("color:#7C4A03;font-weight:600" if v != "" else "")
         return out
 
     def table(types, title, tone, tag):
@@ -257,12 +449,17 @@ with tabs[1]:
             "Amount": d["amount_inr"].map(fmt_inr).values, "Fair cost": d["fair_inr"].map(fmt_inr).values,
             "30-day clock": d["due_date"].map(lambda x: "Overdue" if days_left(x) < 0 else f"{days_left(x)} days left").values,
             "Status": d["key"].map(lambda k: STATUS[status_of(k)]).values,
+            "Voice": d["road_id"].map(lambda rid: "" if rid not in VM["voice"] else ("Critical" if VM["crit"][rid]["critical"] else f"{len(VM['voice'][rid]['devices'])} devices")).values,
             "Why flagged": d["reason"].map(lambda r: r[lang]).values})  # the long column goes last so nothing important is cut off
         ev = st.dataframe(show.style.apply(sev_style, axis=1), hide_index=True, width="stretch", height=min(420, 38 * (len(show) + 1)),
                           on_select="rerun", selection_mode="single-row", key=f"tbl_{tag}",
-                          column_config={"Job": st.column_config.TextColumn(width=96), "Type": st.column_config.TextColumn(width=118), "Road": st.column_config.TextColumn(width=140), "Contractor": st.column_config.TextColumn(width=150), "Amount": st.column_config.TextColumn(width=82), "Fair cost": st.column_config.TextColumn(width=82), "30-day clock": st.column_config.TextColumn("Clock", width=96), "Status": st.column_config.TextColumn(width=78), "Why flagged": st.column_config.TextColumn(width="large")})
-        if ev.selection.rows:
-            evidence(d.iloc[ev.selection.rows[0]])
+                          column_config={"Job": st.column_config.TextColumn(width=96), "Type": st.column_config.TextColumn(width=118), "Road": st.column_config.TextColumn(width=140), "Contractor": st.column_config.TextColumn(width=150), "Amount": st.column_config.TextColumn(width=82), "Fair cost": st.column_config.TextColumn(width=82), "30-day clock": st.column_config.TextColumn("Clock", width=96), "Status": st.column_config.TextColumn(width=78), "Voice": st.column_config.TextColumn(width=84), "Why flagged": st.column_config.TextColumn(width="large")})
+        target = d.iloc[ev.selection.rows[0]] if ev.selection.rows else None
+        if target is None and st.query_params.get("flag"):  # a shareable link to one flag: ?flag=WO25-02068
+            hit = d[d["job_id"] == st.query_params.get("flag")]
+            target = hit.iloc[0] if len(hit) else None
+        if target is not None:
+            evidence(target)
 
     def evidence(row):
         e, k = row["evidence"], row["key"]
@@ -276,25 +473,41 @@ with tabs[1]:
                 cols[i % len(cols)].markdown(H(f'<div class="ev"><div class="k">{esc(a.replace("_", " ").capitalize())}</div><div class="val">{esc(b)}</div></div>'), unsafe_allow_html=True)
             if row["type"] == "overcharged":
                 st.markdown(f'Rate card: **{fmt_inr(e["rate_card_inr"])}** {e["unit"]} × {e["area_sqm"]} gives a fair cost of **{fmt_inr(row["fair_inr"])}**. Billed **{fmt_inr(row["amount_inr"])}**, which is **{e["ratio"]}×** the normal rate.')
+            v = VM["voice"].get(row["road_id"])
+            if v:
+                c = VM["crit"][row["road_id"]]
+                st.markdown(H(f'<div class="vrow"><div class="vh"><b>Voice on this road</b><span class="pill {"red" if c["critical"] else "ochre"}">{"Critical voice" if c["critical"] else "Building"}</span></div>'
+                              f'<div class="vm">{v["reports"]} complaints from {len(v["devices"])} devices in the last {VM["days"]} days · last {esc(when(v["last"]))}</div>'
+                              f'<div class="chips">{check_chips(c)}</div></div>'), unsafe_allow_html=True)
+                for _, note in sorted(v["notes"], reverse=True)[:3]:
+                    st.markdown(f"> {note}")
+                if v["thumbs"]:
+                    st.image(v["thumbs"][:4], width=110)
             st.markdown('<div class="note" style="margin-top:10px">For BMC</div>', unsafe_allow_html=True)
+            cur = ACTIONS.get(k)
+            if cur:
+                st.info(f"Latest ward-office action: **{STATUS[status_in(ACTIONS, k)]}**" + (f" · {cur['text']}" if cur.get("text") else "") + f" · {when(cur['at'])}")
             b = st.columns(4)
             if b[0].button("Answer", key=f"a_{k}", type="primary"):
                 st.session_state.show_answer = k
             if b[1].button("Hold payment", key=f"h_{k}"):
-                st.session_state.status[k] = "held"; st.rerun()
-            if row["type"] in ("guarantee_paid", "built_weak") and b[2].button("Ask contractor to fix free", key=f"f_{k}"):
-                st.session_state.status[k] = "fixfree"; st.rerun()
-            if row["type"] == "utility_damage" and b[2].button("Recover from utility", key=f"r_{k}"):
-                st.session_state.status[k] = "recover"; st.rerun()
-            if st.session_state.get("show_answer") == k:
-                txt = st.text_area("Public answer", key=f"t_{k}", value=st.session_state.answers.get(k, ""))
-                if st.button("Publish answer", key=f"p_{k}") and txt.strip():
-                    st.session_state.answers[k] = txt
-                    st.session_state.status[k] = "answered"
-                    st.session_state.show_answer = None
+                if do_action(row, "hold", "Payment held pending review"):
                     st.rerun()
-            if k in st.session_state.answers:
-                st.success(f"BMC answer: {st.session_state.answers[k]}")
+            if row["type"] in ("guarantee_paid", "built_weak") and b[2].button("Ask contractor to fix free", key=f"f_{k}"):
+                if do_action(row, "fixfree", "Original contractor asked to repair it free under the guarantee"):
+                    st.rerun()
+            if row["type"] == "utility_damage" and b[2].button("Recover from utility", key=f"r_{k}"):
+                if do_action(row, "recover", "Cost to be recovered from the utility company"):
+                    st.rerun()
+            if status_in(ACTIONS, k) == "held" and b[3].button("Release hold", key=f"x_{k}"):
+                if do_action(row, "release", "Payment hold released"):
+                    st.rerun()
+            if st.session_state.get("show_answer") == k:
+                txt = st.text_area("Public answer (shown on the road in the phone app)", key=f"t_{k}", value="")
+                if st.button("Publish answer", key=f"p_{k}") and txt.strip():
+                    if do_action(row, "answer", txt.strip()):
+                        st.session_state.show_answer = None
+                        st.rerun()
 
     table(RED_TYPES, "Red flags: strong signals", "red", "red")
     table(AMBER_TYPES, "Amber: check with context, not counted as corruption", "ochre", "amber")
@@ -346,6 +559,13 @@ with tabs[3]:
 # ================================================================ Citizen voice
 with tabs[4]:
     cz = D["citizen"][ward]
+    with st.expander("Critical-voice rule (a proposal to tune in a pilot ward)"):
+        st.markdown("A road is in **critical voice** only when the citizens' voice **and** the proof agree: enough independent devices, an unanswered red flag, a failed fix, and a contractor with a poor fair-measured record (D or worse). Voice alone never counts, and a person at the ward office makes any decision.")
+        rc1, rc2 = st.columns(2)
+        rc1.slider("Independent devices needed", 1, 50, 3, key="cv_min")
+        rc2.slider("Look back (days)", 1, 30, 7, key="cv_days")
+    live_panel(ward)
+    st.markdown('<div class="sec">From the dataset</div><div class="note">The history below is the synthetic dataset, not the phone app.</div>', unsafe_allow_html=True)
     st.markdown(H(f"""<div class="flow">
 <div class="st"><div class="n">{cz['complaints']}</div><div class="t">complaints received</div></div>
 <div class="st"><div class="n">{cz['duplicates_merged']}</div><div class="t">duplicates merged</div></div>

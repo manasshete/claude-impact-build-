@@ -4,6 +4,7 @@
  * surface: absolute · axes: off-white / one sans / pine teal · posture: citizen phone app, thumb-first · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 · weakest: E, white ink on the tangerine badge colour fails at 3.6:1; set the citizen action in ink black on tangerine instead */
 /* Hallmark · waive 7b · every card, field and sheet is the card surface token set to pure white · the supplied Emerald Ledger palette specifies the card surface as #FFFFFF, with #E4E4E7 hairlines to lift it off the off-white page */
+/* Hallmark · answered F7 · every text field and textarea in the app (tax, name, place, complaint, RTI) deliberately shares one recipe so every form in the app looks and behaves the same for Raju */
 /* shared tokens and base rules (Hallmark scaffold), inlined so the Android build bundles one stylesheet */
 :root {
   --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
@@ -320,3 +321,17 @@ h2.spaced { margin-top: var(--space-md); }
 .grades { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
 .grades .chip { gap: var(--space-xs); padding: var(--space-2xs) var(--space-sm) var(--space-2xs) var(--space-2xs); font-size: var(--fs-m); }
 .grades .grade { width: 28px; height: 28px; font-size: var(--fs-m); border-radius: 8px; }
+
+/* the ward board link: complaint form, status from the ward office, live line */
+.where textarea { width: 100%; min-height: 96px; padding: var(--space-sm) var(--space-md); border-radius: 14px; border: 2px solid var(--color-rule); background: var(--card); font-size: var(--fs-b); resize: vertical; margin-bottom: var(--space-sm); }
+.where label.check { display: flex; align-items: center; gap: var(--space-sm); min-height: var(--hit); margin: var(--space-xs) 0; font-size: var(--fs-m); color: var(--color-ink-2); }
+.check input { width: 28px; height: 28px; flex: none; margin: 0; accent-color: var(--teal-700); }
+.statusbox { display: flex; gap: var(--space-sm); align-items: flex-start; padding: var(--space-sm) var(--space-md); border-radius: 14px; margin-bottom: var(--space-sm); background: var(--teal-50); border: 1.5px solid var(--teal-500); color: var(--teal-900); }
+.statusbox p { margin-top: var(--space-2xs); font-size: var(--fs-m); color: var(--color-ink); }
+.statusbox.hold { background: var(--amber-50); border-color: var(--amber-500); color: var(--amber-900); }
+.statusbox.fixfree, .statusbox.recover { background: var(--tang-50); border-color: var(--tang-500); color: var(--tang-700); }
+.statusbox.release, .statusbox.answer { background: var(--green-50); border-color: var(--green-500); color: var(--green-700); }
+.liveline { display: flex; align-items: center; gap: var(--space-xs); color: var(--color-ink-2); font-size: var(--fs-m); margin-bottom: var(--space-sm); }
+.raise p { color: var(--color-ink-2); margin-bottom: var(--space-sm); }
+.sent { font-size: var(--fs-s); color: var(--color-muted); font-weight: 600; }
+.sent.yes { color: var(--green-700); }

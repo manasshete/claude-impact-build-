@@ -139,6 +139,21 @@ try {
         if (r.rti_text) { check(lang + ' rti ' + r.road_id, rtiScreen(r)); n++; const f = rtiFilled(r); if (/\\{(NAME|ADDRESS|DATE)\\}/.test(f)) add(lang + ' rti unfilled slot ' + r.road_id); if (!/(WO25-\\d+)/.test(f) && (r.flags||[]).some(x => x.job)) add(lang + ' rti ' + r.road_id + ' cites no job id although flags have one'); } } }
     state.lang = 'mr'; return { issues, n }; })()`);
   ok(`${sweep.n} screens rendered (every road, ward, RTI, 3 languages): no undefined/NaN/jargon/%/party names/raw money/missing alt`, sweep.issues.length === 0, sweep.issues.slice(0, 15).join(" | "));
+  const sweepLive = await ev(`(() => { store.set('apla_api', 'http://127.0.0.1:1'); const issues = []; const add = (m) => issues.length < 40 && issues.push(m);
+    const BAD = /undefined|NaN|\\[object|\\bnull\\b|Infinity/; const JARGON = /\\b(SLA|DLP|audit|variance|anomaly)\\b|%/;
+    const txt = (html) => { const d = document.createElement('div'); d.innerHTML = html; return d.textContent; };
+    const chk = (what, html) => { const t = txt(html); if (BAD.test(t)) add(what + ' bad token ' + (t.match(BAD) || [])[0]); if (JARGON.test(t)) add(what + ' jargon ' + (t.match(JARGON) || [])[0]); if (/<(button|a)[^>]*>\\s*<\\/\\1>/.test(html)) add(what + ' empty control'); };
+    state.signals = { RD0220: { reports: 5, reports_7d: 3, devices_7d: 3, metoo: 9, status: { kind: 'hold', text: 'Payment held', at: 'x' } } };
+    let n = 0;
+    for (const lang of ['mr', 'hi', 'en']) { state.lang = lang;
+      for (const r of state.data.roads) { state.noteRoad = null; chk(lang + ' complain ' + r.road_id, complainScreen(r)); chk(lang + ' road+live ' + r.road_id, roadScreen(r)); n += 2; }
+      chk(lang + ' report+api', reportScreen()); chk(lang + ' profile+api', profileScreen()); chk(lang + ' home+api', homeScreen());
+      for (const k of Object.keys(translations[lang].statusKinds)) if (!translations[lang].statusKinds[k]) add(lang + ' statusKinds.' + k);
+      for (const k of ['sent', 'queued', 'rejected', 'limited', 'duplicate']) if (!translations[lang].flash[k]) add(lang + ' flash.' + k);
+    }
+    for (const k of Object.keys(translations.en.statusKinds)) if (!['answer', 'hold', 'fixfree', 'recover', 'release'].includes(k)) add('unexpected status kind ' + k);
+    state.lang = 'mr'; state.signals = {}; store.del('apla_api'); return { issues, n }; })()`);
+  ok(`${sweepLive.n} ward-board screens (complaint form and road card with a live status, 3 languages): no undefined/NaN/jargon, every status and flash message translated`, sweepLive.issues.length === 0, sweepLive.issues.slice(0, 10).join(" | "));
   const wordsCheck = await ev(`(() => { const out = []; for (const l of ['mr','hi','en']) { const t = translations[l]; for (const k of Object.keys(translations.en)) { const a = translations.en[k], b = t[k]; if (typeof a !== typeof b) out.push(l + '.' + k + ' type'); if (typeof a === 'function' && typeof b === 'function') { try { const x = /^wa[A-Z]/.test(k) ? b({ road: 'R', ward: 'W', spent: '₹1', jobs: 1, broke: 1, guarantee: true, days: 3, link: 'x' }, 'summary', 'link') : b(1,2,3,4,5); if (/undefined|NaN/.test(JSON.stringify(x))) out.push(l + '.' + k + '() -> ' + JSON.stringify(x).slice(0,50)); } catch (e) { out.push(l + '.' + k + ' throws ' + e.message); } } } } return out; })()`);
   ok("every translated string/function exists in all 3 languages and runs", wordsCheck.length === 0, wordsCheck.slice(0, 8).join(" | "));
 
@@ -357,6 +372,18 @@ try {
       if (m.sw > wdt) bad.push(`${r}: page ${m.sw}px > ${wdt}`); if (m.small.length) bad.push(`${r}: small targets ${m.small.join(",")}`); if (m.clipped) bad.push(`${r}: ${m.clipped} elements poke out of the screen`);
     }
     ok(`${wdt}px wide: no sideways scroll, no target under 44px, nothing poking out (6 screens)`, bad.length === 0, bad.join(" | "));
+  }
+  for (const wdt of [320, 360, 390]) {
+    await send("Emulation.setDeviceMetricsOverride", { width: wdt, height: 800, deviceScaleFactor: 1, mobile: true });
+    const bad = [];
+    for (const r of ["#/complain/RD0220", "#/road/RD0220", "#/report", "#/profile"]) {
+      await ev("localStorage.setItem('apla_api', 'http://127.0.0.1:1')"); await open(r);
+      const m = await ev(`({ sw: document.documentElement.scrollWidth, small: [...document.querySelectorAll('button, a.btn, summary, select, textarea, input:not([type=hidden]):not([type=checkbox])')].filter(b => b.offsetHeight && b.offsetHeight < 44).map(b => (b.textContent || b.id).trim().slice(0, 14) + ':' + b.offsetHeight),
+        unlabelled: [...document.querySelectorAll('textarea, input:not([type=hidden]):not([hidden])')].filter(f => !(f.getAttribute('aria-label') || (f.id && document.querySelector('label[for="' + f.id + '"]')) || f.closest('label'))).map(f => f.id) })`);
+      if (m.sw > wdt) bad.push(`${r}: page ${m.sw}px > ${wdt}`); if (m.small.length) bad.push(`${r}: small targets ${m.small.join(",")}`); if (m.unlabelled.length) bad.push(`${r}: unlabelled ${m.unlabelled.join(",")}`);
+    }
+    await ev("localStorage.removeItem('apla_api')");
+    ok(`${wdt}px wide with the board connected: complaint form, road card, photo screen and profile fit, targets >= 44px, fields labelled`, bad.length === 0, bad.join(" | "));
   }
   await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
   await open("#/road/RD0220"); await ev("window.scrollTo(0, document.body.scrollHeight)"); await sleep(100);

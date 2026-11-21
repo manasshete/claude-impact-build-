@@ -25,9 +25,92 @@ const state = {
   rtiName: "", rtiAddr: "", meTooMem: new Set(), navDepth: 0,
   // photo-to-place flow
   photo: null, photoRoad: null, where: "", whereMsg: "", cands: [], gpsBusy: false, clearArm: false,
+  // the ward board link
+  signals: {}, sigAt: 0, complainRoad: null, flash: null, cnote: "", rnote: "", cmsg: "", sending: false, shareThumb: true,
 };
 const roadById = new Map();
 const wardByCode = new Map();
+
+// ---------- the ward board link (optional: needs the signal API; without it nothing leaves the phone) ----------
+const API_DEFAULT = ""; // the hosted signal API (https). Open the app with ?api=<url> to try one without rebuilding
+function apiBase() {
+  try {
+    const q = new URLSearchParams(location.search).get("api");
+    if (q !== null) store.set("apla_api", q.trim().replace(/\/+$/, ""));
+  } catch { /* no URL to read (tests) */ }
+  return (store.get("apla_api") || API_DEFAULT || "").replace(/\/+$/, "");
+}
+function deviceId() { // a random id this phone made up: it tells devices apart, it is not a person
+  let d = store.get("apla_device");
+  if (!d || !/^[A-Za-z0-9-]{8,64}$/.test(d)) {
+    d = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "d" + Math.random().toString(16).slice(2, 12) + Date.now().toString(16);
+    store.set("apla_device", d);
+  }
+  return d;
+}
+async function api(path, method = "GET", body) {
+  const base = apiBase();
+  if (!base) return null;
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
+  try {
+    const r = await fetch(base + path, { method, signal: ctrl ? ctrl.signal : undefined, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    let data = null;
+    try { data = await r.json(); } catch { /* no body */ }
+    return { ok: r.ok, status: r.status, data };
+  } catch { return null; } finally { if (timer) clearTimeout(timer); }
+}
+const outbox = {
+  get() { try { return JSON.parse(store.get("apla_outbox") || "[]"); } catch { return []; } },
+  set(v) { store.set("apla_outbox", JSON.stringify(v.slice(-50))); },
+};
+const rejected = (r) => r && r.status >= 400 && r.status < 500 && r.status !== 429;
+function markSent(localId) {
+  try {
+    const list = JSON.parse(store.get("apla_reports") || "[]");
+    store.set("apla_reports", JSON.stringify(list.map((x) => (x.id === localId ? { ...x, sent: true } : x))));
+  } catch { /* nothing to mark */ }
+}
+async function sendReport(rep, note, thumb) { // -> "off" | "sent" | "duplicate" | "queued" | "rejected" | "limited"
+  if (!apiBase()) return "off";
+  const body = { road_id: rep.road, device_id: deviceId(), via: rep.via, lat: rep.lat, lon: rep.lon, place_text: rep.where, note, thumb, lang: state.lang };
+  const r = await api("/api/reports", "POST", body);
+  if (r && r.ok) { markSent(rep.id); refreshSignals(true); return r.data && r.data.duplicate ? "duplicate" : "sent"; }
+  if (r && r.status === 429) return "limited";
+  if (rejected(r)) return "rejected";
+  outbox.set([...outbox.get(), { path: "/api/reports", body, localId: rep.id }]); // offline or the board is down: keep it and retry
+  return "queued";
+}
+async function sendMeToo(id) {
+  if (!apiBase()) return;
+  const body = { road_id: id, device_id: deviceId() };
+  const r = await api("/api/metoo", "POST", body);
+  if (r && r.ok) {
+    const sig = state.signals[id] || (state.signals[id] = { reports: 0, reports_7d: 0, devices_7d: 0, metoo: 0, status: null });
+    if (r.data && r.data.new) sig.metoo += 1; // our own tap, counted once
+    store.set(`apla_msync_${id}`, "1");
+    refreshSignals(true);
+  } else if (!rejected(r) && !(r && r.status === 429)) outbox.set([...outbox.get(), { path: "/api/metoo", body, msync: id }]);
+}
+async function flushOutbox() {
+  const q = outbox.get();
+  if (!q.length || !apiBase()) return;
+  const rest = [];
+  for (const it of q) {
+    const r = await api(it.path, "POST", it.body);
+    if (r && r.ok) { if (it.localId) markSent(it.localId); if (it.msync) store.set(`apla_msync_${it.msync}`, "1"); }
+    else if (!rejected(r) && !(r && r.status === 429)) rest.push(it); // still offline: try again later
+  }
+  outbox.set(rest);
+  if (q.length !== rest.length) refreshSignals(true);
+}
+async function refreshSignals(force) {
+  if (!apiBase() || (!force && Date.now() - state.sigAt < 15000)) return;
+  const r = await api("/api/signals");
+  if (r && r.ok && r.data && r.data.roads) { state.signals = r.data.roads; state.sigAt = Date.now(); paintLive(); }
+}
+const meTooShown = (r) => (r.me_too || 0) + ((state.signals[r.road_id] || {}).metoo || 0) +
+  (hasMeToo(r.road_id) && store.get(`apla_msync_${r.road_id}`) !== "1" ? 1 : 0); // our tap counts locally until the board has it
 
 // ---------- formatting ----------
 const T = () => translations[state.lang];
@@ -309,16 +392,26 @@ function locate() {
 // ---------- photo → place ----------
 // A photo alone answers nothing. It only gets a road once we hold a place: the photo's own location,
 // the phone's GPS, a Google Maps link or a typed address. No place, no road, never the sample road.
-function placeFound(road, via, lat = null, lon = null) {
-  addReport({
+async function placeFound(road, via, lat = null, lon = null) {
+  const rep = {
     id: Date.now(), road: road.road_id, via, lat, lon, where: state.where.trim().slice(0, 200),
-    date: new Date().toISOString().slice(0, 10), thumb: state.photo?.thumb || "",
-  });
+    date: new Date().toISOString().slice(0, 10), thumb: state.photo?.thumb || "", note: state.rnote.trim(), sent: false,
+  };
+  addReport(rep);
   state.photoRoad = road.road_id;
   state.whereMsg = "";
   state.cands = [];
   state.where = "";
   store.set("apla_ward", road.ward);
+  let kind = "off";
+  if (apiBase()) {
+    state.sending = true;
+    render();
+    kind = await sendReport(rep, rep.note, state.shareThumb ? rep.thumb : "");
+    state.sending = false;
+  }
+  state.rnote = "";
+  state.flash = kind === "off" ? null : { road: road.road_id, key: kind };
   openRoad(road.road_id, null, via);
 }
 
@@ -429,6 +522,8 @@ function updatesFor(roads) {
   return roads.map((r) => {
     const lines = [r.open_complaints ? t.updOpen(r.open_complaints, r.max_days_open) : t.updClear];
     if (r.broke_again) lines.push(t.updBroke(r.broke_again));
+    const st = apiBase() && (state.signals[r.road_id] || {}).status;
+    if (st) lines.unshift(`${t.statusFrom}: ${t.statusKinds[st.kind] || ""}`);
     return `<button type="button" class="update" data-go="#/road/${esc(r.road_id)}"><b>${esc(r.name)}</b>` +
       `<span class="meta">${wardChip(r.ward)}</span>` +
       lines.map((l, i) => `<span class="uline${i === 0 && r.open_complaints ? " open" : ""}">${esc(l)}</span>`).join("") + `</button>`;
@@ -478,12 +573,15 @@ function roadScreen(r) {
   const t = T();
   const note = state.note && state.noteRoad === r.road_id ? `<p class="note">${icon("pin")}<span>${esc(t[state.note])}</span></p>` : "";
   const via = state.noteVia && state.noteRoad === r.road_id ? `<p class="located">${icon("pin")}<span>${esc(t.locatedVia(t.via[state.noteVia]))}</span></p>` : "";
+  const flash = state.flash && state.flash.road === r.road_id
+    ? `<p class="${state.flash.key === "sent" || state.flash.key === "duplicate" ? "located" : "note"}">${icon("check")}<span>${esc(t.flash[state.flash.key] || "")}</span></p>` : "";
   const part = r.segments_in_ward > 1 ? `<span class="part">${esc(t.part(r.segment))}</span>` : "";
   const head = `<section class="road-head"><h1>${esc(r.name)}</h1>
     <p class="sub">${wardChip(r.ward)}${part}</p>
-    ${r.bus_route ? `<span class="pill">${icon("bus")}${esc(t.busRoute)}</span>` : ""}</section>`;
+    ${r.bus_route ? `<span class="pill">${icon("bus")}${esc(t.busRoute)}</span>` : ""}</section>
+    <div id="livebox" data-road="${esc(r.road_id)}">${liveHtml(r)}</div>`;
   const photo = state.photo && state.photoRoad === r.road_id
-    ? `<figure class="photo-card"><img class="photo" src="${esc(state.photo.url)}" alt=""><figcaption class="photo-cap">${icon("pin")}<span>${esc(t.yourPhoto)}</span></figcaption></figure>` : "";
+    ? `<figure class="photo-card"><img class="photo" src="${esc(state.photo.url)}" alt=""><figcaption class="photo-cap">${icon("pin")}<span>${esc(apiBase() ? t.yourPhotoSent : t.yourPhoto)}</span></figcaption></figure>` : "";
 
   let body;
   if (r.owner && r.owner !== "BMC") body = notBmcBox(r);
@@ -492,7 +590,64 @@ function roadScreen(r) {
     guaranteeBlock(r) + flagsBlock(r) + contractorsBlock(r) + trailBlock(r);
   const tax = r.owner && r.owner !== "BMC" ? "" : taxBlock(r.ward);
   const wardBtn = `<button type="button" class="btn outline" data-go="#/ward/${encodeURIComponent(r.ward)}"><span>${esc(t.wardLink(r.ward).replace(/\s*→\s*$/, ""))}</span>${icon("arrow")}</button>`;
-  return topBar() + note + via + head + photo + body + tax + wardBtn + asOf() + actionsBar(r);
+  return topBar() + note + via + flash + head + photo + body + raiseBlock(r) + tax + wardBtn + asOf() + actionsBar(r);
+}
+
+function liveHtml(r) { // what the ward board knows about this road, straight from the shared store
+  if (!apiBase()) return "";
+  const t = T(), sg = state.signals[r.road_id];
+  if (!sg) return "";
+  let h = "";
+  if (sg.status) h += `<div class="statusbox ${esc(sg.status.kind)}">${icon("check")}<div><b>${esc(t.statusFrom)}: ${esc(t.statusKinds[sg.status.kind] || "")}</b>${sg.status.text ? `<p>${esc(sg.status.text)}</p>` : ""}</div></div>`;
+  if (sg.reports_7d || sg.metoo) h += `<p class="liveline">${icon("voice")}<span>${esc(t.liveLine(sg.reports_7d, sg.metoo))}</span></p>`;
+  return h;
+}
+function paintLive() {
+  if (typeof document === "undefined") return;
+  const { page, id } = route();
+  const box = document.getElementById("livebox");
+  if (page === "road" && box && box.dataset.road === id && roadById.has(id)) {
+    box.innerHTML = liveHtml(roadById.get(id));
+    const n = document.querySelector('[data-action="metoo"] .num');
+    if (n) n.textContent = count(meTooShown(roadById.get(id)));
+  }
+  const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if (!typing && (page === "profile" || page === "")) render();
+}
+const raiseBlock = (r) => !apiBase() || (r.owner && r.owner !== "BMC") ? "" :
+  `<section class="card raise"><h2>${esc(T().raiseTitle)}</h2><p>${esc(T().raiseBody)}</p>` +
+  `<button type="button" class="btn cta" data-go="#/complain/${esc(r.road_id)}">${icon("send")}<span>${esc(T().raiseBtn)}</span></button></section>`;
+
+function complainScreen(r) {
+  const t = T(), p = state.photo && state.complainRoad === r.road_id ? state.photo : null;
+  return topBar() + `<section class="road-head"><h1>${esc(t.complainTitle)}</h1>
+      <p class="sub"><span class="wname">${esc(r.name)}</span>${wardChip(r.ward)}</p></section>
+    <section class="card where">
+      <label for="cnote">${esc(t.noteLabel)}</label>
+      <textarea id="cnote" rows="4" maxlength="500" placeholder="${esc(t.notePh)}">${esc(state.cnote)}</textarea>
+      ${p ? `<figure class="photo-card"><img class="photo" src="${esc(p.url)}" alt=""></figure>` : ""}
+      <button type="button" class="btn outline slim" data-action="complain-photo" data-id="${esc(r.road_id)}">${icon("camera")}<span>${esc(p ? t.changePhoto : t.addPhotoBtn)}</span></button>
+      ${p ? `<label class="check"><input type="checkbox" id="cshare"${state.shareThumb ? " checked" : ""}><span>${esc(t.shareThumb)}</span></label>` : ""}
+      <p class="hint">${icon("lock", "inline")}${esc(t.sendInfo)}</p>
+      <p class="warn" id="cmsg" role="alert">${esc(state.cmsg)}</p>
+      <button type="button" class="btn cta" data-action="send-complaint" data-id="${esc(r.road_id)}"${state.sending ? " disabled" : ""}>${icon("send")}<span>${esc(state.sending ? t.sending : t.sendBtn)}</span></button>
+    </section>`;
+}
+async function sendComplaint(id) {
+  const t = T(), note = state.cnote.trim(), p = state.photo && state.complainRoad === id ? state.photo : null;
+  if (!note && !p) { state.cmsg = t.needNoteOrPhoto; return render(); }
+  if (state.sending) return;
+  state.cmsg = "";
+  state.sending = true;
+  render();
+  const rep = { id: Date.now(), road: id, via: "road", lat: null, lon: null, where: "", date: new Date().toISOString().slice(0, 10), thumb: p ? p.thumb || "" : "", note, sent: false };
+  addReport(rep);
+  const kind = await sendReport(rep, note, p && state.shareThumb ? p.thumb || "" : "");
+  state.sending = false;
+  state.cnote = "";
+  if (p) state.photoRoad = id;
+  state.flash = { road: id, key: kind };
+  go(`#/road/${encodeURIComponent(id)}`);
 }
 
 const moneyBlock = (r) => `<section class="card money"><p class="label">${esc(T().moneyLabel)}</p><p class="big">${money(r.spent_inr)}</p></section>`;
@@ -573,7 +728,7 @@ function actionsBar(r) {
   } else {
     const mine = hasMeToo(r.road_id);
     const me = `<button type="button" class="btn cta${mine ? " done" : ""}" data-action="metoo" data-id="${esc(r.road_id)}" aria-pressed="${mine}">` +
-      `${mine ? "" : icon("voice")}<span>${esc(mine ? t.meTooDone : plain(t.meToo))} <span class="num">${count((r.me_too || 0) + (mine ? 1 : 0))}</span></span></button>`;
+      `${mine ? "" : icon("voice")}<span>${esc(mine ? t.meTooDone : plain(t.meToo))} <span class="num">${count(meTooShown(r))}</span></span></button>`;
     const rti = r.rti_text ? `<button type="button" class="btn teal" data-go="#/rti/${esc(r.road_id)}">${icon("doc")}<span>${esc(plain(t.askBmc))}</span></button>` : "";
     const my = `<a class="btn outline" href="${MYBMC_URL}" target="_blank" rel="noopener"><span>${esc(plain(t.myBmc))}</span></a>`;
     buttons = [me, wa, rti, my].filter(Boolean);
@@ -658,14 +813,17 @@ function reportScreen() {
       <label for="where">${esc(t.whereLabel)}</label>
       <input id="where" type="text" autocomplete="off" inputmode="url" placeholder="${esc(t.wherePh)}" value="${esc(state.where)}">
       <p class="hint">${esc(t.whereHelp)}</p>
+      ${apiBase() ? `<label for="rnote">${esc(t.noteLabel)}</label><textarea id="rnote" rows="3" maxlength="500" placeholder="${esc(t.notePh)}">${esc(state.rnote)}</textarea>
+        <label class="check"><input type="checkbox" id="rshare"${state.shareThumb ? " checked" : ""}><span>${esc(t.shareThumb)}</span></label>
+        <p class="hint">${icon("lock", "inline")}${esc(t.sendInfo)}</p>` : ""}
       <p class="warn" id="wheremsg" role="alert">${esc(state.whereMsg)}</p>
       <div class="stack">
-        <button type="button" class="btn teal" data-action="find">${icon("link")}<span>${esc(t.findRoad)}</span></button>
+        <button type="button" class="btn teal" data-action="find"${state.sending ? " disabled" : ""}>${icon("link")}<span>${esc(t.findRoad)}</span></button>
         <button type="button" class="btn outline" data-action="gps"${state.gpsBusy ? " disabled" : ""}>${icon("pin")}<span>${esc(state.gpsBusy ? t.gpsBusy : t.useGps)}</span></button>
       </div>
     </section>
     ${cands}
-    <p class="small">${icon("lock", "inline")}${esc(t.savedOnPhone)}</p>`;
+    <p class="small">${icon("lock", "inline")}${esc(apiBase() ? t.sendInfo : t.savedOnPhone)}</p>`;
 }
 
 function profileScreen() {
@@ -680,7 +838,8 @@ function profileScreen() {
     return `<button type="button" class="report" data-go="#/road/${esc(r.road)}">
       ${r.thumb ? `<img src="${esc(r.thumb)}" alt="">` : `<span class="noimg">${icon("camera")}</span>`}
       <span class="rtxt"><b>${esc(road.name)}</b><span class="meta">${wardChip(road.ward)}</span>
-      <span class="via">${icon("pin")}${esc(t.via[r.via] || "")}</span>
+      <span class="via">${icon("pin")}${esc(t.via[r.via] || t.viaRoad)}</span>
+      ${apiBase() ? `<span class="sent ${r.sent ? "yes" : ""}">${esc(r.sent ? t.sentBadge : t.localBadge)}</span>` : ""}
       <span class="when num">${esc(dayMonthYear(r.date))}</span></span></button>`;
   }).join("");
   return topBar() + `<h1 class="visually-hidden">${esc(t.profileTitle)}</h1><header class="profile-head"><span class="avatar big">${initial}</span>
@@ -696,7 +855,7 @@ function profileScreen() {
     ${reports.length ? `<div class="reports">${rep}</div>` : `<p class="empty">${esc(t.noReports)}</p>`}
     <h2 class="sect">${esc(t.myMeToo)}</h2>
     ${backed.length ? `<div class="results">${backed.map(roadItem).join("")}</div>` : `<p class="empty">${esc(t.noMeToo)}</p>`}
-    <p class="small">${icon("lock", "inline")}${esc(t.savedOnPhone)}</p>
+    <p class="small">${icon("lock", "inline")}${esc(apiBase() ? t.sendInfo : t.savedOnPhone)}</p>
     <button type="button" class="btn danger" data-action="clear">${icon("trash")}<span>${esc(state.clearArm ? t.clearData + "?" : t.clearData)}</span></button>`;
 }
 
@@ -706,11 +865,12 @@ function render() {
   const app = document.getElementById("app");
   const { page, id } = route();
   document.documentElement.lang = state.lang;
-  if (page !== "road") { state.note = null; state.noteVia = null; }
+  if (page !== "road") { state.note = null; state.noteVia = null; if (page !== "complain" && !state.sending) state.flash = null; }
   let html, shown = page;
   if (page === "road" && roadById.has(id)) html = roadScreen(roadById.get(id));
   else if (page === "rti" && roadById.has(id)) html = rtiScreen(roadById.get(id));
   else if (page === "ward" && wardByCode.has(id)) html = wardScreen(wardByCode.get(id));
+  else if (page === "complain" && roadById.has(id)) html = complainScreen(roadById.get(id));
   else if (page === "report") html = reportScreen();
   else if (page === "profile") html = profileScreen();
   else { html = homeScreen(); shown = ""; }
@@ -740,7 +900,7 @@ async function copyText(text) {
 
 function eraseMyData() {
   const keys = [];
-  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("apla_") && k !== "apla_lang") keys.push(k); } } catch { /* ignore */ }
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("apla_") && k !== "apla_lang" && k !== "apla_api") keys.push(k); } } catch { /* ignore */ }
   keys.forEach((k) => store.del(k));
   state.meTooMem.clear();
   state.tax = ""; state.name = ""; state.photo = null; state.photoRoad = null;
@@ -763,7 +923,9 @@ function wire() {
     if (action !== "clear") state.clearArm = false;
     if (action === "back") back();
     else if (action === "locate") locate();
-    else if (action === "photo") photo.click();
+    else if (action === "photo") { state.complainRoad = null; photo.click(); }
+    else if (action === "complain-photo") { state.complainRoad = id; photo.click(); }
+    else if (action === "send-complaint") sendComplaint(id);
     else if (action === "find") findPlace();
     else if (action === "gps") useGps();
     else if (action === "exif-use" && state.photo?.exif) placeFromCoords(state.photo.exif.lat, state.photo.exif.lon, "exif");
@@ -775,6 +937,7 @@ function wire() {
       state.meTooMem.add(id);
       store.set(`apla_metoo_${id}`, "1");
       render();
+      sendMeToo(id);
     } else if (action === "copy") {
       if (await copyText(rtiFilled(roadById.get(id)))) {
         el.textContent = T().copied;
@@ -800,6 +963,10 @@ function wire() {
       card.querySelector("#taxhint").textContent = taxHasValue() ? T().taxHint : T().taxEmpty;
     } else if (el.id === "where") {
       state.where = el.value; // memory only until a road is chosen
+    } else if (el.id === "cnote") {
+      state.cnote = el.value;
+    } else if (el.id === "rnote") {
+      state.rnote = el.value;
     } else if (el.id === "pname") {
       state.name = el.value;
       store.set("apla_name", state.name);
@@ -822,6 +989,8 @@ function wire() {
     } else if (e.target.id === "pward") {
       store.set("apla_ward", e.target.value);
       render();
+    } else if (e.target.id === "cshare" || e.target.id === "rshare") {
+      state.shareThumb = e.target.checked;
     }
   });
   photo.addEventListener("change", async () => {
@@ -834,10 +1003,11 @@ function wire() {
     state.cands = [];
     state.whereMsg = "";
     photo.value = "";
-    go("#/report"); // a photo alone answers nothing: next we ask where it is
+    if (state.complainRoad) go(`#/complain/${encodeURIComponent(state.complainRoad)}`, true); // photo for a complaint on a road we already know
+    else go("#/report"); // a photo alone answers nothing: next we ask where it is
     try { p.exif = readExifGps(await file.slice(0, 262144).arrayBuffer()); } catch { /* no location in the file */ }
     try { p.thumb = await makeThumb(file); } catch { /* thumbnail is a nicety */ }
-    if (state.photo === p && route().page === "report") render();
+    if (state.photo === p && (route().page === "report" || route().page === "complain")) render();
   });
   window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
 }
@@ -852,6 +1022,10 @@ async function boot() {
   }
   wire();
   render();
+  if (apiBase()) { // the ward board link: send anything that was waiting, then keep the live numbers fresh
+    flushOutbox().then(() => refreshSignals(true));
+    setInterval(() => { if (document.visibilityState !== "hidden") { flushOutbox(); refreshSignals(); } }, 20000);
+  }
 }
 
 if (typeof document !== "undefined" && document.getElementById("app")) boot();

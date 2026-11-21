@@ -67,7 +67,7 @@ None of this is visible to the person who walks that road.
 |---|---|---|
 | **For** | Raju and anyone like him | Citizens' groups, journalists, corporators (any party), and the **BMC ward office** |
 | **Question** | "Where did my road's money go?" | "Which bills need an answer, and who is doing fair work?" |
-| **Form** | Phone web app and Android APK, no login, no backend | Streamlit dashboard reading one JSON file |
+| **Form** | Phone web app and Android APK, no login. Works alone, or connected to a ward board | Streamlit dashboard reading one JSON file, plus live complaints from the phone app |
 | **Language** | Marathi by default, Hindi and English one tap away | English, Marathi, Hindi text |
 
 ---
@@ -125,7 +125,21 @@ A place outside Mumbai is refused, a short `goo.gl` link asks for the full addre
 
 - **Me tab:** optional name, home ward, language, the photos he added (each with how it was located), the roads he backed, and **latest on your roads**: how many complaints are still open and for how long.
 - **Tax card:** he types his yearly property tax and sees it **beside** what his ward spent on roads this monsoon, how much of that was above BMC's own rate, and how much went on fixes that broke within a month. It is a side-by-side comparison. **It does not divide, estimate or claim how his money was used.** We chose honesty over a number that looks impressive.
-- **Privacy:** everything stays on the phone. Nothing is uploaded. Two taps erase it all.
+- **Privacy:** on its own, everything stays on the phone. Connected to a ward board, only what the citizen chooses to send leaves it: the road, a note, a place and, only if they allow it, a small photo. Never a name. Two taps erase what is on the phone.
+
+---
+
+## 4b. From a complaint to a decision: the live loop
+
+The two products are connected by a small **signal API**. A citizen raises a complaint on the phone, it appears on the board within seconds, and what the ward office decides comes back to the road on the phone. The full story, with real records, is in [USE_CASE.md](USE_CASE.md).
+
+1. **Raise.** On a road card, *Raise a complaint*: a note, an optional photo, an optional place. The screen says exactly what is sent, and a small photo copy goes **only if the citizen allows it**. Offline, it is kept and sent later.
+2. **Count it fairly.** One complaint per device per road per day, one "Me too" per device per road, and the board sees a one-way hash of each device, never a name or the raw id.
+3. **See it.** The board's live panel shows complaints, roads ranked by voice, and a **critical-voice check**: independent devices **and** an unanswered red flag **and** a failed fix **and** a contractor with a D-or-worse record must all agree. Voice alone never counts.
+4. **Decide.** The ward office reads the voice next to the proof and presses **Hold payment**, **Ask contractor to fix free**, **Answer**, **Recover** or **Release**. A person decides, with a reason.
+5. **Answer back.** The decision shows on the citizen's road card and Me tab, in their language.
+
+*What it is not:* the board records and recommends. Stopping a real payment is BMC's own process. *What is left:* hosting the API over https for the public web app and APK, and "Is it fixed?" confirmation from residents.
 
 ---
 
@@ -262,6 +276,7 @@ We built it from two written specs, one for each product, using **Claude Code** 
 We would rather say these than have a judge find them.
 
 - **The data is synthetic.** No real contractor, officer or amount appears. The flags show the method, not findings about real people.
+- **The live loop is not hosted yet.** It runs on one machine and is tested end to end. The public web app and APK ship without a board address (so the complaint button is hidden there) until the API is hosted over https. Residents cannot yet confirm "Is it fixed?".
 - **Two data builders.** The phone app and the board each read their own JSON, and their rules differ in places (built-weak flags 32 roads in the app and 45 on the board). The same road can show slightly different flag counts. Merging them is the first next step.
 - **"Not a BMC road"** is built but never triggers in the phone app, because the dataset has no road-owner column.
 - **The APK is debug-signed** (fine for sideloading, not the Play Store) and **has not been run on a physical Android device**. We tested the web app thoroughly in a real browser and the APK's contents statically.
@@ -274,7 +289,7 @@ We would rather say these than have a judge find them.
 
 1. **One data brain for both products**, so the app and the board always agree.
 2. **Real data.** Use RTI replies and BMC's published tenders to replace the synthetic set, with the same method.
-3. **Close the loop.** Let ward offices publish answers that show up on the citizen's road card ("BMC replied on 12 Nov").
+3. **Host the live loop.** Put the signal API on https so the web app and APK connect to a real ward board, then add "Is it fixed?" confirmation from residents and phone verification.
 4. **Reach.** A WhatsApp-first flow for people who never install anything, and a Play Store release.
 5. **Ideal cost of a new road** from material, wage and machine rates, once the data exists.
 6. **Pilot with one ward.** A ward office or a citizens' group in a single ward, with real jobs, real questions and a 30-day answer clock.
@@ -300,7 +315,7 @@ No. Red flags are "bills to check", each with a job ID and proof. Normal price v
 Precision over quantity. Rules are narrow and documented, the 1.5× overcharge line sits well above normal variation (a job at 1.25× is never flagged), and we list what we checked and found honest.
 
 **What about privacy?**
-No account and no server. A name, tax figure, photo and RTI details stay on the phone and can be erased in two taps. The RTI name and address are never stored.
+No account. On its own, the app keeps everything on the phone. If a ward board is connected, a complaint sends the road, the note, the place (rounded to about 11 m) and, only if the citizen allows it, a small photo. Never a name, and no IP address is stored. The RTI name and address are never stored or sent. A name, tax figure and photos on the phone can be erased in two taps.
 
 **Can someone fake a report with a random photo?**
 No. A photo alone gets no answer. It needs a place, and a place outside Mumbai is refused.

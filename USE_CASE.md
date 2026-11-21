@@ -2,7 +2,7 @@
 
 ### Kurla Andheri Road, Mumbai · *How one citizen's report reaches the ward office, and what the ward office can do about it*
 
-This is the story we tell to explain **why the phone app and the dashboard are two halves of one system.** It is a *target scenario*. The road, the contractor, the jobs and the amounts are real records from the (synthetic) dataset; the new complaints and the payment decision are the story. Section 8 says exactly what exists today and what a pilot would need to build.
+This is the story we tell to explain **why the phone app and the dashboard are two halves of one system.** The road, the contractor, the jobs and the amounts are real records from the (synthetic) dataset; the new complaints and the payment decision are the story. **The loop in it now runs end to end in the app** (the phone, a small signal API and the board, tested together). What is not yet true is public hosting and BMC's own accounts. Section 8 has the exact status.
 
 > **Story rules.** Figures marked *(story)* are illustrative. The dataset records repair bills, not payment status, so "a bill awaiting payment" is a stated assumption. No officer is named: the ward office acts as an office, and only citizens and contractors are named, all fictional.
 
@@ -176,9 +176,9 @@ Holding a contractor's money is serious. The design keeps it defensible.
 
 ---
 
-## 6. How "critical voice" could be decided
+## 6. How "critical voice" is decided
 
-A proposal to tune with a pilot ward, not a finished rule. All numbers here are placeholders.
+Built on the board with the thresholds as sliders (the demo default is 3 independent devices over 7 days). The numbers are placeholders to tune in a pilot ward, and the story's 25 is illustrative.
 
 ```
 critical_voice(road) = 
@@ -186,7 +186,7 @@ critical_voice(road) =
   AND reports fall within ~200 m of the road
   AND the road has an unanswered red flag          (guarantee paid, failed fix, overcharged, built weak)
   AND a failed fix or a missed deadline in the last 30 days
-  AND contractor's fair ward grade                 is C or worse
+  AND contractor's fair ward grade                 is D or worse
 ```
 
 - **Independent** means distinct devices after duplicate merging, not the raw number of taps.
@@ -207,49 +207,71 @@ critical_voice(road) =
 
 ---
 
-## 8. What exists today, and what a pilot needs
+## 8. What is built, and what is left
 
-Honest status, so the story is never mistaken for a finished product.
+<table><tr>
+<td><img src="docs/phone-complain.png" width="200" alt="Raise a complaint on the phone"></td>
+<td><img src="docs/board-evidence.png" width="520" alt="The ward board: voice next to the proof, and the actions"></td>
+<td><img src="docs/phone-status.png" width="200" alt="The ward office's answer on the road"></td>
+</tr></table>
 
-| Step in the story | Today | A pilot would need |
-|---|---|---|
-| See a road's money, guarantee and flags in plain Marathi | ✅ Built and live | |
-| Add a photo that **needs a place** (Maps link, GPS, address, photo location) | ✅ Built; stored **on the phone** | Send the report to a shared store |
-| **Me too** (one tap per road per device) | ✅ Built; counts **on the phone** | A shared counter |
-| Share on WhatsApp, ready RTI letter | ✅ Built | |
-| Link to BMC's own complaint channel | ✅ Built | Pre-filled complaint text where BMC allows |
-| Reports and Me too **appear on the board live** | ❌ Not built. The board reads a **static data file** | A small shared backend (a database and two endpoints) |
-| Duplicate merging and the "citizen voice" view | ✅ Built for the **dataset's complaints** | Run it on live reports |
-| **Critical-voice signal** | ❌ Not built | The rule in section 6, tuned in a pilot ward |
-| Board actions: **Answer, Hold payment, Ask contractor to fix free** | ✅ Buttons built; status is kept **only in the open browser session** | Save to the shared store with the reason and an audit log |
-| Status shown back on the citizen's road card and Me tab | ❌ Not built | Read status from the shared store |
-| "Is it fixed?" confirmation by residents | ❌ Not built | One tap, stored with the place |
-| Real payment hold in BMC's accounts | ❌ Not possible from here | **BMC's own process.** The board gives the evidence; the ward office holds the payment in its own system |
+The whole loop in this story now runs end to end: **phone app → signal API → ward board → back on the phone.** It is tested together in a real browser (`tests/e2e-live.mjs`). Honest status:
+
+| Step in the story | Status |
+|---|---|
+| See a road's money, guarantee and flags in plain Marathi | ✅ Built, live |
+| **Raise a complaint** on a road: a note, an optional photo, an optional place (Maps link, GPS, address, photo location) | ✅ Built. It reaches the board when the app is connected to one (see below); without a board it stays on the phone |
+| The app says exactly what it sends: the road, the note, the place, and a small photo **only if the citizen allows it**. Never a name | ✅ Built |
+| **Me too**, shared across devices, one per device per road, counted once after a reload | ✅ Built |
+| Works offline: the complaint is kept and sent when the phone is back online | ✅ Built |
+| Complaints and Me too **appear on the board within seconds** | ✅ Built (the live panel refreshes every few seconds) |
+| One report per device per road per day; independent devices are counted, not taps | ✅ Built |
+| **Critical-voice signal**: independent devices, an unanswered red flag, a failed fix and a contractor with a poor record (D or worse) must **all** agree | ✅ Built, with the thresholds as sliders (a proposal to tune in a pilot ward) |
+| Board actions **Answer, Hold payment, Ask contractor to fix free, Recover, Release**, saved with their reason | ✅ Built. Saved in the shared store, not just the open browser |
+| The ward office sees the **voice on that road** next to the proof, with the citizens' words and photos | ✅ Built |
+| Status shown back on the citizen's road card and Me tab, in their language | ✅ Built |
+| "Is it fixed?" confirmation by residents | ❌ Not built |
+| **Public hosting** | ❌ The API runs on your own machine. The public web app and APK ship **without a board address**, so the complaint button is hidden there until an API is hosted over https and its address is set |
+| Real payment hold in BMC's accounts | ❌ Not possible from here. **BMC's own process.** The board records and recommends; the ward office holds the payment in its own system |
 
 > **Important:** the board does not stop real money. It records and recommends. Actually stopping a payment is BMC's decision in BMC's own system, with the reason and the evidence this board provides.
 
-### The smallest build that makes the story real
+### How it is built
 
 ```
- Phone app ──POST /reports, /metoo──▶  Shared store (one table: reports, one: metoo, one: actions)
-                                              │
- Board ◀──GET live reports per ward───────────┤
- Board ──POST /actions (answer, hold, fix-free) ─▶ same store ──▶ shown on the phone road card
+ Phone app ──POST /api/reports, /api/metoo──▶  server/api.py  ──▶  SQLite  (reports, metoo, actions)
+        ▲                                          ▲   │
+        └────── GET /api/signals (public, anonymous)    │ read by
+                                                        ▼
+ Ward board ◀── reports, actions (ward-office token)  ──┘
+ Ward board ── POST /api/actions (answer, hold, fix free, recover, release) ──▶ same store ──▶ shown on the phone's road card
 ```
 
-Three tables (reports, "Me too", ward actions), a handful of endpoints, and the existing screens. The board's critical-voice panel and the phone's status line are small additions on top of what is already built.
+- **Privacy:** no names and no IP addresses are stored. A "device" is a random id the phone made up, and the board only ever sees a one-way hash of it. Places are rounded to about 11 metres.
+- **Abuse limits:** one complaint per device per road per day, 20 complaints and 300 Me too per device per day, a small-photo size cap, and a place outside Mumbai is dropped.
+- **Ward-office actions need a token** (`APLA_ADMIN_TOKEN`). The public can only send complaints and read anonymous counts.
 
 ---
 
-## 9. A 90-second version we can demo today
+## 9. A two-minute live demo
 
-Everything here runs on what is built now:
+Run the three pieces on one machine:
 
-1. **Phone:** open the live app, tap **माझ्या जवळचा रस्ता तपासा**, show **Kurla Andheri Road**: ₹30.5 लाख, broke again 6 times, **under guarantee**.
-2. **Phone:** take a photo, show it **asks where**, paste a Google Maps link, show the report on the **Me** tab. Tap **Me too** and **WhatsApp**.
-3. **Board:** open **L ward → Red flags**, click **WO25-02068**. Show the proof (guarantee road, reopened within 30 days, contractor Grade F).
-4. **Board:** press **Hold payment**, then **Ask contractor to fix free**, then **Answer**. The status changes on screen.
-5. **Say plainly:** *"In a pilot, the phone's report and the board's action travel through a small shared store, so the citizen sees the answer on their own road. Today the two halves share one data file."*
+```bash
+python server/api.py                              # the signal API, http://127.0.0.1:8787
+streamlit run app.py                              # the board (reads the same database)
+cd app && python -m http.server 8000              # the phone app
+```
+
+1. **Phone:** open `http://127.0.0.1:8000/?api=http://127.0.0.1:8787`, search **Kurla Andheri Road**, and show ₹30.5 लाख, broke again 6 times, **under guarantee**.
+2. **Phone:** tap **Raise a complaint**, write a line, **send**. Tap **Me too**.
+3. **Board:** open **L ward → Citizen voice**. The complaint is there within seconds, with how it was located.
+4. **Board:** add complaints from two more browsers (or lower **Independent devices needed** to 1). The road flips to **Critical voice**, with the four checks shown.
+5. **Board:** open **Red flags**, click **WO25-02068**, and read the voice next to the proof. Press **Hold payment**, then **Ask contractor to fix free**, then **Answer**.
+6. **Phone:** reload the road. The ward office's answer shows on the road, in the citizen's language.
+7. **Say plainly:** *"The board records and recommends. Stopping the actual payment is BMC's own process."*
+
+To try it from a real phone on the same Wi-Fi, start the API with `--host 0.0.0.0`, serve the app the same way, and open it using your computer's address instead of `127.0.0.1`.
 
 ---
 

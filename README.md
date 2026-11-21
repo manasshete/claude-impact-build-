@@ -28,7 +28,7 @@ A phone app and a ward dashboard that show Mumbaikars **how much money went into
 [What it does](#what-it-does) · [The problem](#the-problem) · [Screenshots](#screenshots) · [How it decides what to flag](#how-it-decides-what-to-flag) · [Built to be fair](#built-to-be-fair)
 
 **For developers**
-[Quick start](#quick-start) · [Repo layout](#repo-layout) · [Architecture](#architecture) · [Data files](#data-files) · [The phone app](#the-phone-app-dev-notes) · [The data brain](#the-data-brain-dev-notes) · [Tests](#tests) · [Build the APK](#build-the-apk) · [Deploy](#deploy) · [Configuration](#configuration) · [Known limits](#known-limits) · [Roadmap](#roadmap) · [Credits](#credits)
+[Quick start](#quick-start) · [The live loop](#the-live-loop) · [Repo layout](#repo-layout) · [Architecture](#architecture) · [Data files](#data-files) · [The phone app](#the-phone-app-dev-notes) · [The data brain](#the-data-brain-dev-notes) · [Tests](#tests) · [Build the APK](#build-the-apk) · [Deploy](#deploy) · [Configuration](#configuration) · [Known limits](#known-limits) · [Roadmap](#roadmap) · [Credits](#credits)
 
 ---
 
@@ -42,7 +42,7 @@ Two products read one data file.
 |---|---|---|
 | **For** | Raju, 45, Kurla, who reads Marathi and lives on WhatsApp | Citizens' groups, journalists, corporators (any party) and **BMC's ward office** |
 | **Answers** | "Where did my road's money go?" | "Which bills need an answer, and where should the next rupee go?" |
-| **Form** | Phone web app and Android APK. No login, no backend | Streamlit dashboard (laptop) |
+| **Form** | Phone web app and Android APK. No login. Works on its own, or connected to a ward board | Streamlit dashboard (laptop) |
 | **Language** | Marathi by default, Hindi and English one tap away | English, Marathi and Hindi text |
 
 **It is not a complaint app.** Complaints still go to BMC's own MyBMC. We add what none of them show: **the money, the contractor, the guarantee, and whether the fix lasted.** No party, corporator or officer name appears anywhere.
@@ -54,17 +54,19 @@ Two products read one data file.
 - **A photo needs a place.** The app never reads the photo. A photo alone gets **no answer**; it asks where it is: the photo's own location, the phone's GPS, a **Google Maps link**, or a typed address. A place outside Mumbai is refused, and the sample road is never used to answer a photo.
 - **Me tab.** Optional name, home ward, language, the photos you added, the roads you backed, and *latest on your roads* (complaints still open, and for how long). Erase everything in two taps.
 - **Tax card.** Type your yearly property tax and see it **beside** what your ward spent on roads this monsoon, how much was above BMC's own rate, and how much went on fixes that broke within a month. A side-by-side comparison only: it does not divide or estimate how your money was used.
-- **Privacy.** Everything stays on the phone. Nothing is uploaded.
+- **Raise a complaint** *(when the app is connected to a ward board)*. A note, an optional photo and an optional place go straight to the ward board. The screen says exactly what is sent, a small photo copy goes **only if you allow it**, and your name is never sent. Without a connection the complaint is saved and sent when you are back online.
+- **The ward office's answer, on your road.** When the ward office answers, holds a payment or asks the contractor to fix the road free, the citizen sees it on the road card and in the Me tab, in their language.
+- **Privacy.** On its own, everything stays on the phone and nothing is uploaded. Only when the app is connected to a ward board does a complaint you choose to send leave the phone: the road, your note, the place (rounded to about 11 m) and, if you allow it, a small photo. No names and no IP addresses are stored. A device is a random id, and the board only ever sees a one-way hash of it.
 
 ### The Ward Accountability Board
 
 | Tab | What it gives |
 |---|---|
-| **Overview** | Budget, spent (with a meter against budget), what it should have cost, money lost on fixes that broke within a month, open questions, BMC's answered / pending / overdue, a three-line summary, and a budget-against-spend chart for all wards |
-| **Red flags** | Every flagged job with a 30-day clock and status. Click a row for the proof. **BMC can answer in public**: Answer, Hold payment, Ask contractor to fix free, Recover from utility |
+| **Overview** | Budget, spent (with a meter against budget), what it should have cost, money lost on fixes that broke within a month, open questions, BMC's answered / pending / overdue, a **live strip of complaints from the phone app**, a three-line summary, and a budget-against-spend chart for all wards |
+| **Red flags** | Every flagged job with a 30-day clock, status and a **Voice** column. Click a row (or open `?flag=WO25-02068`) for the proof **and the citizens' voice on that road**. **BMC can answer in public**: Answer, Hold payment, Ask contractor to fix free, Recover from utility, Release. Each is saved and shows on the citizen's road |
 | **Contractors** | A report card per contractor: grade, fixes that lasted, jobs on time, price against rate card. Compared **only within the same ward** |
 | **Next rupee** | The five roads where the next repair rupee should go, with a suggested fix and cost. Guarantee roads come with "make the original contractor repair it, cost to BMC ₹0" |
-| **Citizen voice** | A complaints → duplicates → issues → never-fixed funnel, what citizens say, and the roads with the most "Me too" |
+| **Citizen voice** | **Live complaints from the phone app**, roads ranked by voice, and a **critical-voice check** (independent devices, an unanswered red flag, a failed fix and a contractor with a D-or-worse record must all agree; voice alone never counts). Below that, the dataset's complaints → duplicates → issues → never-fixed funnel and the roads with the most "Me too" |
 
 > **BMC's win, said in the product:** *answer these before they become headlines. Every answered flag shows publicly as answered.*
 
@@ -97,6 +99,12 @@ These overlap and are not meant to be added together. The detail and a 3-minute 
 | Overview | Red flags | Contractors |
 |---|---|---|
 | <img src="docs/dashboard-overview.png" width="300" alt="Overview"> | <img src="docs/dashboard-flags.png" width="300" alt="Red flags"> | <img src="docs/dashboard-contractors.png" width="300" alt="Contractors"> |
+
+**The live loop** (a complaint on the phone, the ward office's decision on the board, the answer back on the road)
+
+| Raise a complaint | The ward office's answer, on the road | Live complaints and critical voice | Voice next to the proof, and the actions |
+|---|---|---|---|
+| <img src="docs/phone-complain.png" width="150" alt="Complaint form"> | <img src="docs/phone-status.png" width="150" alt="Road card with the ward office's status"> | <img src="docs/board-live-voice.png" width="260" alt="Live complaints on the board"> | <img src="docs/board-evidence.png" width="260" alt="Evidence panel with voice and actions"> |
 
 ## How it decides what to flag
 
@@ -160,6 +168,14 @@ streamlit run app.py
 cd app && python -m http.server 8000      # then open http://localhost:8000 in a phone-size view (390 px)
 ```
 
+**Run the whole loop** (phone → board → phone, details in [The live loop](#the-live-loop)):
+
+```bash
+python server/api.py                    # the signal API on http://127.0.0.1:8787
+streamlit run app.py                    # the board reads the same database
+cd app && python -m http.server 8000    # then open http://127.0.0.1:8000/?api=http://127.0.0.1:8787
+```
+
 **Rebuild the phone app's data** (standard library only):
 
 ```bash
@@ -183,8 +199,12 @@ python -I scripts/build_apla_data.py dataset/data app/
 ├── app.py                   The Ward Accountability Board (Streamlit)
 ├── scripts/
 │   └── build_apla_data.py   Builds app/apla_data.json for the phone app
+├── server/                  The link between phone and board
+│   ├── api.py               Signal API (standard library): complaints, Me too, ward-office actions
+│   ├── store.py             SQLite store: reports, metoo, actions
+│   └── test_api.py, test_board.py
 ├── dataset/                 The synthetic dataset (CSVs) and its data dictionary
-├── tests/                   check, e2e, e2e-report and audit (Node)
+├── tests/                   check, e2e, e2e-report, e2e-live and audit (Node)
 ├── docs/                    Screenshots
 ├── index.html               Redirects the GitHub Pages root to app/
 ├── PITCH.md                 The full pitch
@@ -203,7 +223,15 @@ python -I scripts/build_apla_data.py dataset/data app/
  dataset/data/*.csv → scripts/build_apla_data.py → app/apla_data.json → app/ (phone web app) → android/ (APK)
 ```
 
-Both apps are **read-only views**: they never recompute a number. Claude is never needed at runtime (see [Configuration](#configuration)).
+Both apps are **read-only views** of the dataset: they never recompute a number. Claude is never needed at runtime (see [Configuration](#configuration)).
+
+On top of that, an optional **live loop** carries what citizens do and what the ward office decides:
+
+```
+ phone app ──complaints, Me too──▶ server/api.py ──▶ SQLite ◀── ward board (live panel, actions)
+     ▲                                   │
+     └──────── public, anonymous counts and the ward office's latest answer ◀──┘
+```
 
 > Two builders, on purpose for now: the board has a richer pipeline (all ten checks, grades, ranking), the phone app a lighter one. Their rules differ in places, which is the first item on the [roadmap](#roadmap).
 
@@ -259,6 +287,43 @@ Both apps are **read-only views**: they never recompute a number. Claude is neve
 - **Self-checks**: every run prints the dataset's reference numbers (city and ward totals, 109 overcharged, 45 billed twice, 45 built-weak roads with RD0176 on top, the six overspent wards, and the next-rupee top three for L ward) with PASS / CHECK.
 - **Claude text is generated once** and cached in `claude_text_cache.json` (git-ignored), so the demo never waits on an API call. Without `--claude`, the same texts come from fixed templates built from the real numbers and job IDs.
 
+## The live loop
+
+Without a board the phone app works exactly as before. With one, a complaint raised on the phone shows on the dashboard within seconds, and the ward office's decision comes back to the road on the phone. The story is in [USE_CASE.md](USE_CASE.md).
+
+**Run it**
+
+```bash
+python server/api.py            # http://127.0.0.1:8787, database server/apla_signals.db
+streamlit run app.py            # the board reads the same database file
+cd app && python -m http.server 8000
+# phone app, connected: http://127.0.0.1:8000/?api=http://127.0.0.1:8787   (the address is remembered)
+```
+
+For a real phone on the same Wi-Fi, start the API with `--host 0.0.0.0`, serve the app the same way, and open it with your computer's address instead of `127.0.0.1`. To connect the APK or a hosted copy, set `API_DEFAULT` in `app/app.js` to an **https** address and rebuild.
+
+**The API** (`server/api.py`, standard library only)
+
+| Request | Who | What |
+|---|---|---|
+| `GET /api/health` | anyone | liveness |
+| `POST /api/reports` | the phone | a complaint: `road_id`, `device_id`, `via`, optional `note`, `place_text`, `lat`/`lon`, small `thumb` |
+| `POST /api/metoo` | the phone | one "Me too" per device per road |
+| `GET /api/signals` | anyone | anonymous per-road counts (this week's complaints and devices, Me too) and the ward office's latest status |
+| `GET /api/reports?ward=&days=&limit=` | ward office | complaints with notes, places and photo copies |
+| `GET /api/actions`, `POST /api/actions` | ward office | latest action per flag; record *answer, hold, fixfree, recover, release* |
+
+Ward-office requests need the `X-Admin-Token` header (`APLA_ADMIN_TOKEN`). The board reads the store file directly on the same machine, or a hosted API when `APLA_API_URL` is set.
+
+**Built-in protections:** one complaint per device per road per day; 20 complaints and 300 Me too per device per day; a place outside Mumbai is dropped; only a small jpeg data-URL is kept; 90 KB request cap. **The board decides nothing by itself:** *critical voice* needs independent devices **and** an unanswered red flag **and** a failed fix **and** a D-or-worse contractor, and a person at the ward office presses the button. The board never stops real money; that is BMC's own process.
+
+**Things to know**
+
+- **Hosting.** The public web app and the APK ship without a board address, so the complaint button is hidden there. They need an API hosted over https.
+- **Browsers.** Chrome lets an https page call an API on `localhost` (the API answers the private-network preflight), but this is untested against the live site, and Safari and Firefox may refuse. The Android wrapper blocks http from its https origin, so the APK needs an https API.
+- **Before exposing it,** set `APLA_ADMIN_TOKEN` (the built-in token is for your laptop only) and put it behind https.
+- **Not built:** the "Is it fixed?" confirmation from residents, phone verification, and an audit export.
+
 ## Tests
 
 ```bash
@@ -266,11 +331,15 @@ node tests/check.mjs          # the spec's logic cases against the real app code
 node tests/e2e.mjs            # drives the real page in headless Chrome at 360 px
 node tests/e2e-report.mjs     # photo → place, profile, tax card, EXIF reader
 node tests/audit.mjs          # full audit: all 291 roads × 3 languages, every interaction, layout, accessibility, the APK
+node tests/e2e-live.mjs       # the live loop in a real browser: complaint → API → ward action → back on the phone
+
+python -m unittest server/test_api.py     # the API: validation, one-per-day, rate limits, admin token, CORS
+python -m unittest server/test_board.py   # the board on a seeded database: live panel, critical voice, saved actions
 ```
 
 - `CHROME=<path>` if Chrome or Edge is not in the usual place. `tests/audit.mjs` also reads `ANDROID_HOME` for the APK manifest check.
 - **Windows:** `check.mjs` and `e2e.mjs` build file paths from URLs and call `python3`, which breaks in a folder with spaces in its name and where Python is `python`. Run them from a path without spaces, or use `audit.mjs` and `e2e-report.mjs`, which are cross-platform.
-- The last full audit: **165 pass, 0 fail**, with four known limits reported as warnings (see below).
+- The last full audit: **169 pass, 0 fail**, with four known limits reported as warnings (see below). The API has 10 tests, the board 9, and the live loop 30 checks.
 
 ## Build the APK
 
@@ -292,6 +361,10 @@ The wrapper handles the camera and gallery chooser, and the location permission 
 
 | Item | Where | Notes |
 |---|---|---|
+| `APLA_API_URL` | environment variable (board) | Read a hosted signal API instead of the local database file |
+| `APLA_ADMIN_TOKEN` | environment variable (API and board) | The ward-office token. The built-in dev token is for your laptop only |
+| `APLA_DB` | environment variable (API and board) | Path of the SQLite file (default `server/apla_signals.db`) |
+| `API_DEFAULT`, `?api=` | `app/app.js`, the page address | The signal API the phone app talks to (empty = off) |
 | `ANTHROPIC_API_KEY` | environment variable | Only for `build_data.py --claude`. Never stored in the repo (`.env` is git-ignored) |
 | Board theme | `.streamlit/config.toml` | Emerald Ledger colours |
 | Live link in shares | `PUBLIC_URL` in `app/app.js` | |
@@ -300,6 +373,8 @@ The wrapper handles the camera and gallery chooser, and the location permission 
 ## Known limits
 
 - **Synthetic data.** The flags show the method, not findings about real people.
+- **The live loop is not hosted.** It runs on your machine; the public web app and APK have no board address until an API is hosted over https.
+- **The board records and recommends.** It does not stop real payments, and residents cannot yet confirm "Is it fixed?".
 - **Two data builders.** The same road can show slightly different flag counts in the phone app and the board (for example built-weak flags 32 roads in the app and 45 on the board; the app grades contractors city-wide only).
 - **"Not a BMC road"** is built but never triggers in the phone app, because the dataset has no road-owner column. The board guesses six roads from forwarded complaints.
 - **Android.** The APK is debug-signed (fine for sideloading, not for the Play Store) and has not been run on a physical device.
@@ -311,7 +386,7 @@ The wrapper handles the camera and gallery chooser, and the location permission 
 
 1. **One data brain for both products**, so the app and the board always agree.
 2. **Real data** (RTI replies, published tenders) in place of the synthetic set, same method.
-3. **Close the loop:** ward offices publish answers that appear on the citizen's road card.
+3. **Host the signal API** over https and set it in the web app and APK, then add "Is it fixed?" confirmation and phone verification.
 4. **Reach:** a WhatsApp-first flow and a Play Store release.
 5. **Ideal cost of a new road** once material, wage and machine rates exist.
 6. **A one-ward pilot** with a ward office or civic group and a 30-day answer clock.

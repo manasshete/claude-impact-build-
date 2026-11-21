@@ -392,3 +392,56 @@ Object.assign(translations.en, {
   taxLine: (x) => `You paid ${x}`,
   ward: "Ward", backed: "Backed",
 });
+
+// ---- v3: raising a complaint, and the ward office's answer coming back (needs the signal API) ----
+Object.assign(translations.mr, {
+  raiseTitle: "या रस्त्यावर तक्रार करा", raiseBody: "वॉर्ड कार्यालयाला काय बिघडले आहे ते सांगा. तक्रार लगेच वॉर्ड बोर्डवर दिसते.", raiseBtn: "तक्रार करा",
+  complainTitle: "तक्रार करा", noteLabel: "काय बिघडले आहे? (फोटो जोडल्यास ऐच्छिक)", notePh: "उदा. स्टेशनजवळ खोल खड्डा, दुचाकी घसरत आहेत",
+  addPhotoBtn: "फोटो जोडा", shareThumb: "या फोटोची छोटी प्रत वॉर्ड कार्यालयाला पाठवा",
+  sendInfo: "वॉर्ड कार्यालयाला जाते: रस्ता, तुमचा मजकूर, ठिकाण आणि (तुम्ही परवानगी दिल्यास) छोटा फोटो. तुमचे नाव कधीच नाही.",
+  sendBtn: "वॉर्ड कार्यालयाला पाठवा", sending: "पाठवत आहे…", needNoteOrPhoto: "आधी समस्या लिहा किंवा फोटो जोडा.",
+  flash: {
+    sent: "पाठवली. वॉर्ड बोर्डला आता तुमची तक्रार दिसते.", queued: "जतन केली. इंटरनेट मिळताच पाठवली जाईल.",
+    rejected: "वॉर्ड बोर्डने ही तक्रार स्वीकारली नाही. माहिती तपासून पुन्हा प्रयत्न करा.", limited: "तुम्ही आज खूप तक्रारी पाठवल्या आहेत. उद्या पुन्हा प्रयत्न करा.",
+    duplicate: "आज या रस्त्यावर तुम्ही आधीच तक्रार केली आहे. आधीची तक्रार कायम आहे.",
+  },
+  liveLine: (n, m) => `या आठवड्यात या रस्त्यावर ${n} तक्रारी आणि ${m} “मलाही त्रास आहे” (ॲपवरून)`,
+  statusFrom: "वॉर्ड कार्यालय",
+  statusKinds: { answer: "उत्तर दिले", hold: "तपासणी होईपर्यंत पैसे रोखले", fixfree: "ठेकेदाराला हमीखाली मोफत दुरुस्ती करायला सांगितले", recover: "खर्च युटिलिटी कंपनीकडून वसूल केला जाईल", release: "पैसे रोखणे मागे घेतले" },
+  sentBadge: "वॉर्ड कार्यालयाला पाठवली", localBadge: "फक्त या फोनवर जतन", viaRoad: "तुम्ही निवडलेल्या रस्त्यावरून",
+  yourPhotoSent: "तुमचा फोटो, ठिकाणासह. तुम्ही परवानगी दिल्यासच छोटी प्रत वॉर्ड कार्यालयाला जाते",
+});
+Object.assign(translations.hi, {
+  raiseTitle: "इस सड़क पर शिकायत करें", raiseBody: "वार्ड कार्यालय को बताइए कि क्या खराब है। शिकायत तुरंत वार्ड बोर्ड पर दिखती है।", raiseBtn: "शिकायत करें",
+  complainTitle: "शिकायत करें", noteLabel: "क्या खराब है? (फोटो जोड़ें तो वैकल्पिक)", notePh: "जैसे: स्टेशन के पास गहरा गड्ढा, दोपहिया फिसल रहे हैं",
+  addPhotoBtn: "फोटो जोड़ें", shareThumb: "इस फोटो की छोटी कॉपी वार्ड कार्यालय को भेजें",
+  sendInfo: "वार्ड कार्यालय को जाता है: सड़क, आपका लिखा, जगह और (आपकी अनुमति से) छोटी फोटो। आपका नाम कभी नहीं।",
+  sendBtn: "वार्ड कार्यालय को भेजें", sending: "भेज रहे हैं…", needNoteOrPhoto: "पहले समस्या लिखें या फोटो जोड़ें।",
+  flash: {
+    sent: "भेज दी गई। वार्ड बोर्ड को अब आपकी शिकायत दिखती है।", queued: "सहेज ली। इंटरनेट मिलते ही भेज दी जाएगी।",
+    rejected: "वार्ड बोर्ड ने यह शिकायत स्वीकार नहीं की। जानकारी जांचकर फिर कोशिश करें।", limited: "आज आपने बहुत शिकायतें भेजी हैं। कल फिर कोशिश करें।",
+    duplicate: "आज आप इस सड़क पर पहले ही शिकायत कर चुके हैं। पहली शिकायत मान्य है।",
+  },
+  liveLine: (n, m) => `इस हफ्ते इस सड़क पर ${n} शिकायतें और ${m} “मुझे भी दिक्कत है” (ऐप से)`,
+  statusFrom: "वार्ड कार्यालय",
+  statusKinds: { answer: "जवाब दिया", hold: "जांच तक भुगतान रोका गया", fixfree: "ठेकेदार से गारंटी में मुफ्त मरम्मत करने को कहा गया", recover: "खर्च यूटिलिटी कंपनी से वसूला जाएगा", release: "भुगतान की रोक हटाई गई" },
+  sentBadge: "वार्ड कार्यालय को भेजी गई", localBadge: "सिर्फ़ इस फोन पर सहेजी", viaRoad: "आपकी चुनी सड़क से",
+  yourPhotoSent: "आपकी फोटो, जगह के साथ। आपकी अनुमति हो तभी छोटी कॉपी वार्ड कार्यालय को जाती है",
+});
+Object.assign(translations.en, {
+  raiseTitle: "Raise a complaint on this road", raiseBody: "Tell the ward office what is wrong. It reaches the ward board right away.", raiseBtn: "Raise a complaint",
+  complainTitle: "Raise a complaint", noteLabel: "What is wrong? (optional if you add a photo)", notePh: "For example: a deep cave-in near the station, two-wheelers are skidding",
+  addPhotoBtn: "Add a photo", shareThumb: "Share a small copy of this photo with the ward office",
+  sendInfo: "Sent to the ward office: the road, your note, the place and, if you allow it, a small photo. Never your name.",
+  sendBtn: "Send to ward office", sending: "Sending…", needNoteOrPhoto: "Describe the problem or add a photo first.",
+  flash: {
+    sent: "Sent. The ward board can see your complaint now.", queued: "Saved. It will send as soon as you are online.",
+    rejected: "The ward board did not accept this complaint. Check the details and try again.", limited: "You have sent many complaints today. Please try again tomorrow.",
+    duplicate: "You already complained about this road today. Your earlier complaint stands.",
+  },
+  liveLine: (n, m) => `This week on this road: ${n} complaints and ${m} “Me too”, from the app`,
+  statusFrom: "Ward office",
+  statusKinds: { answer: "Answered", hold: "Payment held pending review", fixfree: "Contractor asked to fix it free under the guarantee", recover: "Cost to be recovered from the utility company", release: "Payment hold released" },
+  sentBadge: "Sent to ward office", localBadge: "Saved on this phone only", viaRoad: "from the road you chose",
+  yourPhotoSent: "Your photo, with its place. A small copy goes to the ward office only if you allow it",
+});

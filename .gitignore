@@ -9,3 +9,6 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+server/*.db
+server/*.db-wal
+server/*.db-shm

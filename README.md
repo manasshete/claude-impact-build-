@@ -20,6 +20,7 @@ A phone app and a ward dashboard that show Mumbaikars **how much money went into
 | **Android app (APK)** | https://manasshete.github.io/claude-impact-build-/AplaBMC.apk (allow "Install unknown apps") |
 | **Ward dashboard** | Run locally (see [Quick start](#quick-start)) or deploy free on Streamlit Community Cloud (see [Deploy](#deploy)) |
 | **The full pitch** | [PITCH.md](PITCH.md) |
+| **Use case story** | [USE_CASE.md](USE_CASE.md): one citizen's photo becomes a held payment and a free repair |
 
 ## Contents
 

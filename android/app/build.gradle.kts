@@ -10,8 +10,8 @@ android {
         applicationId = "com.team23.aplabmc"
         minSdk = 26
         targetSdk = 34 // 35 forces edge-to-edge drawing under the status bar; not needed for a sideloaded demo
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     buildTypes {

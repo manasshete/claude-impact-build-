@@ -60,6 +60,8 @@ Normal price variation (about ±30% of the rate card) is never flagged. Every fl
 | Utility damage | MTNL/MGL trench, a cost BMC can recover |
 | Complaint closed by an older repair | marked fixed using a job done before it was filed |
 
+The board never shows party or officer names: where a citizen's complaint text names a party office as a landmark, `build_data.py` replaces it with "[name removed]".
+
 Waterlogging, drain and manhole jobs are never counted against a road contractor. Contractors are graded A to F within the same ward, using whether fixes lasted, on time, and price against the rate card.
 
 Checked against the dataset: city fair cost ₹12.40 Cr against ₹13.43 Cr billed; 109 overcharged jobs; 45 billed twice (WO25-02459 pairs with WO25-02052, 1 day apart); 45 built-weak roads (RD0176 on top with 16 repairs); 369 utility-trench jobs, about ₹1.96 Cr; 364 complaints closed by an older repair; L ward budget ₹1.19 Cr, spent ₹1.30 Cr, ₹18.2 lakh on fixes that broke within a month; the six overspent wards are A, E, L, M/W, R/C and R/S.
@@ -107,6 +109,7 @@ It copies `app/` into the APK on every build. Set `PUBLIC_URL` in `app/app.js` o
 node tests/check.mjs          # the spec's logic cases against the real app code
 node tests/e2e.mjs            # drives the real page in headless Chrome at 360 px
 node tests/e2e-report.mjs     # photo to place, profile, tax card, EXIF reader
+node tests/audit.mjs          # full audit: all 291 roads x 3 languages, every interaction, layout, accessibility, the APK
 ```
 
 `e2e.mjs` and `check.mjs` build file paths from URLs, which breaks on Windows when the folder name has spaces; run them from a path without spaces there.

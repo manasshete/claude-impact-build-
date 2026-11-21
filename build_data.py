@@ -33,6 +33,9 @@ SURFACE_TYPES = {"Pothole", "Broken paver blocks", "Road cave-in"}
 PATCH_METHODS = {"Cold mix patch", "Hot mix patch", "Mastic asphalt"}
 PUMP_METHODS = {"Dewatering pump deployed", "Pump + debris removal"}
 ACCIDENT_CAUSES = ("Pothole", "Waterlogged road", "Uneven road")
+# The dataset's own complaint text can name a party office as a landmark. The board never shows party or officer names.
+PARTY_RE = re.compile(r"\b(shiv\s*sena|bjp|congress|ncp|mns|aap|samajwadi|rpi|shakha|corporator|nagarsevak|councillor|mla|mp)\b", re.I)
+redact = lambda s: re.sub(r"(\[name removed\][\s,]*){2,}", "[name removed] ", PARTY_RE.sub("[name removed]", str(s)))
 HEAVY = {"Heavy", "Very heavy", "Extremely heavy"}
 LANGS = ("en", "mr", "hi")
 
@@ -520,13 +523,13 @@ def main():
         for jid, gg in c_w[c_w["job_id"].notna()].groupby("job_id"):
             main = gg.sort_values("received_at").iloc[0]
             st = "Closed by old repair" if any(x in closed_old for x in gg["complaint_id"]) else "Fixed"
-            issues.append(dict(title=f"{main['category_reported']} — {main['locality_text']}", quote=str(main["description"]),
+            issues.append(dict(title=f"{main['category_reported']} — {main['locality_text']}", quote=redact(main["description"]),
                                language=str(main["language"]), merged=int(len(gg)), job=jid, status=st,
                                upvotes=int(gg["upvotes"].sum())))
         unl = c_w[c_w["job_id"].isna() & c_w["status"].isin(["Open", "In Progress"])]
         for (loc, cat), gg in unl.groupby(["locality_text", "category_reported"]):
             main = gg.sort_values("received_at").iloc[0]
-            issues.append(dict(title=f"{cat} — {loc}", quote=str(main["description"]), language=str(main["language"]),
+            issues.append(dict(title=f"{cat} — {loc}", quote=redact(main["description"]), language=str(main["language"]),
                                merged=int(len(gg)), job="", status="Never fixed", upvotes=int(gg["upvotes"].sum())))
         issues.sort(key=lambda i: -i["upvotes"])
         dups = int((c_w["status"] == "Closed - Duplicate").sum())

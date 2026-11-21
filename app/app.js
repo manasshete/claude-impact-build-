@@ -111,19 +111,20 @@ const norm = (s) => String(s ?? "").normalize("NFC").toLowerCase().replace(/[^\p
 const bySpent = (a, b) => b.spent_inr - a.spent_inr;
 
 function searchRoads(q) {
-  const n = norm(q);
-  if (n.length < 2) return null;
-  const d = state.data, groups = [], shown = new Set();
-  const named = d.roads.filter((r) => norm(r.name).includes(n)).sort(bySpent).slice(0, 20);
+  const n = norm(q), d = state.data;
+  const single = n.length < 2; // one letter only matches an exact ward code, never road or place names
+  if (single && !d.wards.some((w) => norm(w.code) === n)) return null;
+  const groups = [], shown = new Set();
+  const named = single ? [] : d.roads.filter((r) => norm(r.name).includes(n)).sort(bySpent).slice(0, 20);
   if (named.length) groups.push({ title: T().roadsNamed, roads: named });
   named.forEach((r) => shown.add(r.road_id));
 
   const wardHits = new Map(); // ward code -> matched locality (or "")
   for (const w of d.wards) {
     const names = [w.name, w.areas, ...Object.values(w.names || {})];
-    if (norm(w.code) === n || names.some((s) => norm(s).includes(n))) wardHits.set(w.code, "");
+    if (norm(w.code) === n || (!single && names.some((s) => norm(s).includes(n)))) wardHits.set(w.code, "");
   }
-  for (const l of d.localities || []) {
+  for (const l of single ? [] : d.localities || []) {
     if (!wardHits.has(l.ward) && [l.name, ...l.aliases].some((s) => norm(s).includes(n))) wardHits.set(l.ward, l.name);
   }
   for (const [code, loc] of wardHits) {
@@ -231,7 +232,7 @@ function makeThumb(file) {
 // ---------- navigation ----------
 function route() {
   const [page = "", ...rest] = location.hash.replace(/^#\/?/, "").split("/");
-  return { page, id: decodeURIComponent(rest.join("/")) };
+  try { return { page, id: decodeURIComponent(rest.join("/")) }; } catch { return { page: "", id: "" }; } // broken link: show home
 }
 function go(hash, replace = false) {
   if (replace) { history.replaceState(null, "", hash); render(); window.scrollTo(0, 0); return; }
@@ -682,7 +683,7 @@ function profileScreen() {
       <span class="via">${icon("pin")}${esc(t.via[r.via] || "")}</span>
       <span class="when num">${esc(dayMonthYear(r.date))}</span></span></button>`;
   }).join("");
-  return topBar() + `<header class="profile-head"><span class="avatar big">${initial}</span>
+  return topBar() + `<h1 class="visually-hidden">${esc(t.profileTitle)}</h1><header class="profile-head"><span class="avatar big">${initial}</span>
       <div class="pform"><label for="pname">${esc(t.yourNameOpt)}</label>
       <input id="pname" autocomplete="off" value="${esc(state.name)}"></div></header>
     <section class="card"><h2>${esc(t.homeWard)}</h2>

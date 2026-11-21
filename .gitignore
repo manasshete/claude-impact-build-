@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+claude_text_cache.json
+.env
+.hallmark/
+.DS_Store
+node_modules/
+apla-bmc.zip
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
